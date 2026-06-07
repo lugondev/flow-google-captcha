@@ -1,0 +1,38 @@
+# dependencies
+node_modules
+.pnpm-store
+
+# WXT build output
+.output
+.wxt
+
+# zip
+*.zip
+*.crx
+*.xpi
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# env
+.env
+.env.local
+.env.*.local
+
+# editor
+.vscode
+.idea
+.DS_Store
+*.swp
+*.swo
+
+# typescript
+*.tsbuildinfo
+
+# local session/agent files
+.remember
+.claude

@@ -1,0 +1,8 @@
+allowBuilds:
+  esbuild: true
+  sharp: true
+  spawn-sync: true
+onlyBuiltDependencies:
+  - esbuild
+  - sharp
+  - spawn-sync
