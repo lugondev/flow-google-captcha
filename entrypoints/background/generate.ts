@@ -269,61 +269,73 @@ async function resolveResultMedia(
   return out;
 }
 
-/** Upload one base64 image via the captured upload template; parse a handle.
- *  Throws with a specific reason on failure so the panel can show why. */
-async function uploadRef(ref: RefImage): Promise<RefHandle> {
-  const tpl = templates.upload;
-  if (!tpl) {
-    throw new Error('NO_UPLOAD_TEMPLATE: chưa học request uploadImage — hãy upload 1 ảnh ref trên Flow UI một lần');
-  }
-  if (!ref.base64) throw new Error('REF_NO_DATA');
-  // Swap the image bytes into the template by key-name heuristic.
-  const body = JSON.parse(JSON.stringify(tpl.body));
-  let injected = false;
-  const visit = (node: unknown): void => {
-    if (Array.isArray(node)) return node.forEach(visit);
-    if (!node || typeof node !== 'object') return;
-    for (const [key, val] of Object.entries(node as Record<string, unknown>)) {
-      const k = key.toLowerCase();
-      if (typeof val === 'string' && /image|bytes|content|data|raw|base64|b64/.test(k) && val.length > 64) {
-        (node as Record<string, unknown>)[key] = ref.base64;
-        injected = true;
-      } else if (typeof val === 'object') visit(val);
-    }
-  };
-  visit(body);
-  if (!injected) console.warn('[FlowGen] upload: could not find image-bytes field in template');
+const UPLOAD_IMAGE_URL = 'https://aisandbox-pa.googleapis.com/v1/flow/uploadImage';
 
-  const res = await submit(tpl.url, body, tpl.headers);
+/** Upload one base64 image via the Flow uploadImage API; parse a handle.
+ *  Throws with a specific reason on failure so the panel can show why. */
+export async function uploadRefImage(
+  ref: RefImage,
+  projectId?: string,
+  workflowId?: string,
+): Promise<{ mediaId?: string; url?: string; error?: string }> {
+  try {
+    const handle = await uploadRef(ref, projectId, workflowId);
+    return { mediaId: handle.mediaId, url: handle.url };
+  } catch (e) {
+    return { error: (e as Error).message };
+  }
+}
+
+async function uploadRef(ref: RefImage, projectId?: string, workflowId?: string): Promise<RefHandle> {
+  if (!ref.base64) throw new Error('REF_NO_DATA');
+
+  const clientContext: Record<string, string> = { projectId: projectId || '', tool: 'PINHOLE' };
+  if (workflowId) clientContext.workflowId = workflowId;
+
+  const body = {
+    clientContext,
+    imageBytes: ref.base64,
+    isUserUploaded: true,
+    isHidden: false,
+    mimeType: ref.mime || 'image/jpeg',
+    fileName: ref.name || `image_${Date.now()}.jpg`,
+  };
+
+  const res = await submit(UPLOAD_IMAGE_URL, body, { 'content-type': 'text/plain;charset=UTF-8' });
   if (!res.ok) {
     throw new Error(`UPLOAD_${res.status}: ${res.text.slice(0, 120)}`);
   }
-  const id = res.text.match(UUID_RE)?.[0];
-  const url = (res.text.match(GCS_URL_RE)?.[0] || '').replace(/\\u0026/g, '&').replace(/\\/g, '');
-  let raw: unknown = res.text;
+
+  let mediaId: string | undefined;
   try {
-    raw = JSON.parse(res.text);
-  } catch {
-    /* keep text */
-  }
-  console.log('[FlowGen] uploaded ref →', { id, url: url || undefined });
-  return { mediaId: id, url: url || undefined, raw };
+    const parsed = JSON.parse(res.text) as { media?: { name?: string } };
+    mediaId = parsed?.media?.name;
+  } catch { /* ignore */ }
+  if (!mediaId) mediaId = res.text.match(UUID_RE)?.[0];
+
+  if (!mediaId) throw new Error(`UPLOAD_NO_MEDIA_ID: không parse được mediaId từ response: ${res.text.slice(0, 200)}`);
+
+  console.log('[FlowGen] uploaded ref →', { mediaId, workflowId });
+  return { mediaId };
 }
 
 async function resolveReferences(
   refs: RefImage[],
   progress: (phase: GenProgress['phase'], message: string) => void,
+  projectId?: string,
+  workflowId?: string,
 ): Promise<{ handles: RefHandle[]; errors: string[] }> {
   const handles: RefHandle[] = [];
   const errors: string[] = [];
   for (let i = 0; i < refs.length; i++) {
     const ref = refs[i]!;
     if (ref.source === 'project') {
+      if (!ref.mediaId) { errors.push(`REF_${i + 1}_NO_MEDIA_ID`); continue; }
       handles.push({ mediaId: ref.mediaId, url: ref.url });
     } else {
       progress('submit', `Upload ảnh ref ${i + 1}/${refs.length}…`);
       try {
-        handles.push(await uploadRef(ref));
+        handles.push(await uploadRef(ref, projectId, workflowId));
       } catch (e) {
         const msg = (e as Error).message;
         errors.push(msg);
@@ -415,27 +427,13 @@ function injectReferences(body: unknown, handles: RefHandle[]): void {
   find(body);
   const target = holder.arr;
 
-  const sample = target && target.length ? target[0] : null;
-  const entries = handles.map((h) => {
-    if (sample) {
-      const entry = JSON.parse(JSON.stringify(sample));
-      // overwrite id-like / url-like fields with this handle
-      const patch = (n: unknown): void => {
-        if (!n || typeof n !== 'object') return;
-        for (const [key, val] of Object.entries(n as Record<string, unknown>)) {
-          const k = key.toLowerCase();
-          if (typeof val === 'string') {
-            if (/id|mediaid|name/.test(k) && h.mediaId) (n as Record<string, unknown>)[key] = h.mediaId;
-            else if (/url|uri/.test(k) && h.url) (n as Record<string, unknown>)[key] = h.url;
-          } else if (typeof val === 'object') patch(val);
-        }
-      };
-      patch(entry);
-      return entry;
-    }
-    // Real Flow shape (confirmed): imageInputs[] = { imageInputType, name }
-    return { imageInputType: 'IMAGE_INPUT_TYPE_BASE_IMAGE', name: h.mediaId };
-  });
+  // Always use the confirmed Flow shape — ignore any stale sample from a captured
+  // template. The sample-path regex `/id|mediaid|name/` matched substrings like
+  // "imageInputType" → corrupted the field to a UUID. Drop the sample approach.
+  const entries = handles.map((h) => ({
+    imageInputType: 'IMAGE_INPUT_TYPE_BASE_IMAGE',
+    name: h.mediaId,
+  }));
 
   if (target) {
     target.length = 0;
@@ -459,8 +457,9 @@ function injectReferences(body: unknown, handles: RefHandle[]): void {
 }
 
 function pickTemplate(kind: MediaKind, refCount: number): GenTemplate {
-  // Both image and video use hardcoded V2 built-in schemas — no capture needed.
-  if (kind === 'image') return templates.image ?? defaultImageTemplate();
+  // Image always uses the built-in default — captured template may carry stale
+  // imageInputs from a previous ref-generation and would corrupt new refs.
+  if (kind === 'image') return defaultImageTemplate();
   return defaultVideoTemplate(videoModeForCount(refCount));
 }
 
@@ -673,8 +672,11 @@ export async function runGenerate(
   // Resolve reference images once (upload new files, pass through project ones).
   let refHandles: RefHandle[] = [];
   if (hasRefs) {
-    const resolved = await resolveReferences(refs, (phase, message) =>
-      deps.onProgress({ runId, attempt: 0, maxAttempts: max, phase, message }),
+    const resolved = await resolveReferences(
+      refs,
+      (phase, message) => deps.onProgress({ runId, attempt: 0, maxAttempts: max, phase, message }),
+      params.projectId,
+      params.workflowId,
     );
     refHandles = resolved.handles;
     if (!refHandles.length) {

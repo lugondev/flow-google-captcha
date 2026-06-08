@@ -28,7 +28,7 @@ import {
 } from './project-media';
 import { startTelemetry } from './telemetry';
 import { getRequestLog, clearRequestLog } from './log';
-import { loadTemplates, getTemplates, recordTemplate, runGenerate, cancelCurrentRun } from './generate';
+import { loadTemplates, getTemplates, recordTemplate, runGenerate, cancelCurrentRun, uploadRefImage } from './generate';
 import type { GenerateParams, GenProgress, GenResult } from './types';
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -91,11 +91,19 @@ export default defineBackground({
       if (info.menuItemId === 'open-batch') {
         void chrome.tabs.create({ url: chrome.runtime.getURL('batch.html') });
       }
+      if (info.menuItemId === 'open-workflow') {
+        void chrome.tabs.create({ url: chrome.runtime.getURL('workflow.html') });
+      }
     });
     chrome.contextMenus.removeAll(() => {
       chrome.contextMenus.create({
         id: 'open-batch',
         title: '⊞ Mở bảng nhiều prompt',
+        contexts: ['action'],
+      });
+      chrome.contextMenus.create({
+        id: 'open-workflow',
+        title: '✦ Mở Workflow canvas',
         contexts: ['action'],
       });
     });
@@ -234,6 +242,14 @@ function handleUiMessage(msg: UiMessage, reply: UiReply): boolean {
     case 'CANCEL_GENERATE':
       cancelCurrentRun();
       reply({ ok: true });
+      return true;
+
+    case 'UPLOAD_IMAGE':
+      void uploadRefImage(
+        msg.ref as Parameters<typeof uploadRefImage>[0],
+        msg.projectId as string | undefined,
+        msg.workflowId as string | undefined,
+      ).then(reply);
       return true;
 
     case 'OPEN_FLOW_TAB':
