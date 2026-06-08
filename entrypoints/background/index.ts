@@ -273,7 +273,9 @@ function handleUiMessage(msg: UiMessage, reply: UiReply): boolean {
         }
         runGenerate(runId, params, {
           onProgress: (p: GenProgress) => {
-            chrome.runtime.sendMessage({ type: 'GEN_PROGRESS', progress: p }).catch(() => {});
+            chrome.runtime
+              .sendMessage({ type: 'GEN_PROGRESS', progress: { ...p, clientId: params.clientId } })
+              .catch(() => {});
           },
           refreshToken: () => captureTokenFromFlowTab(),
           reloadFlowTab: () => reloadFlowTabAndSync(),

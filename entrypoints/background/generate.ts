@@ -684,8 +684,21 @@ export async function runGenerate(
     if (result) return result;
   }
 
-  // Every attempt 403'd → the Flow session is stale. Hard-recover (reload tab +
-  // re-sync token), then give it ONE more shot. Still 403 → stop.
+  // Every attempt 403'd → the Flow session is stale. In batch parallel mode we
+  // must NOT reload the shared Flow tab (it would break sibling rows) — just fail
+  // this row so the user can re-run it individually (which does the full recovery).
+  if (lastError === 'API_403' && count403 >= max && params.noReload) {
+    return {
+      runId,
+      ok: false,
+      media: [],
+      attempts: max,
+      error: 'API_403: 3 lần đều 403 (batch — bỏ qua reload tab). Bấm ↻ chạy lại riêng row này để reload Flow & sync token.',
+      rawResponse: lastRaw,
+    };
+  }
+  // Otherwise hard-recover (reload tab + re-sync token), then give it ONE more
+  // shot. Still 403 → stop.
   if (lastError === 'API_403' && count403 >= max) {
     deps.onProgress({ runId, attempt: max, maxAttempts: max, phase: 'retry', message: `${max} lần đều 403 — reload tab Flow & sync lại token, thử lại lần cuối…` });
     await deps.reloadFlowTab();

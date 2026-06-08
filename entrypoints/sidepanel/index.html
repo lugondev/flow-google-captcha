@@ -61,6 +61,8 @@
       }
 
       .header-title { flex: 1; font-size: 14px; font-weight: 700; letter-spacing: -0.01em; color: var(--text); display: flex; align-items: center; gap: 7px; }
+      .header-btn { padding: 5px 9px; font-family: var(--font); font-size: 10.5px; font-weight: 600; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--card); color: var(--text); cursor: pointer; white-space: nowrap; transition: border-color 0.15s, color 0.15s, background 0.15s; }
+      .header-btn:hover { border-color: var(--accent); color: var(--accent); }
       .header-title::before {
         content: '✦';
         font-size: 12px;
@@ -264,6 +266,7 @@
     <div class="main">
     <header>
       <div class="header-title"><span>Flow Helper</span></div>
+      <button id="btn-batch" class="header-btn" title="Mở bảng tạo nhiều prompt">⊞ Nhiều prompt</button>
     </header>
 
     <div class="gen">

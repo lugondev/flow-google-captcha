@@ -585,6 +585,10 @@ function initGeneratePanel(): void {
   refreshTemplateHint();
 }
 
+document.getElementById('btn-batch')?.addEventListener('click', () => {
+  chrome.tabs.create({ url: chrome.runtime.getURL('batch.html') });
+});
+
 document.getElementById('btn-flow')?.addEventListener('click', () => {
   chrome.runtime.sendMessage({ type: 'OPEN_FLOW_TAB' });
 });

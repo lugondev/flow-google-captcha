@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Flow Helper · Nhiều prompt</title>
+    <style>
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+      :root {
+        --bg: #0b0b16; --surface: #14142b; --card: #1c1c3a; --card-hover: #23234a;
+        --border: #2a2a4d; --accent: #6366f1; --accent-2: #3b82f6;
+        --grad: linear-gradient(135deg, #6366f1 0%, #3b82f6 100%);
+        --green: #22c55e; --red: #ef4444; --yellow: #f59e0b;
+        --text: #e6e8f5; --muted: #8b8fb0; --radius: 10px; --radius-sm: 7px;
+        --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        --mono: 'DM Mono', 'Fira Code', ui-monospace, monospace;
+      }
+      html, body { height: 100%; }
+      body {
+        background: radial-gradient(1200px 500px at 100% -10%, rgba(99,102,241,0.10), transparent 60%), var(--bg);
+        color: var(--text); font-family: var(--font); font-size: 13px; line-height: 1.5;
+        display: flex; flex-direction: column; -webkit-font-smoothing: antialiased;
+      }
+
+      header { display: flex; align-items: center; gap: 10px; padding: 14px 20px; border-bottom: 1px solid var(--border); background: var(--surface); flex-shrink: 0; }
+      .title { font-size: 17px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+      .title::before { content: '✦'; background: var(--grad); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+      .title span { background: var(--grad); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+      .title small { color: var(--muted); font-weight: 500; font-size: 12px; -webkit-text-fill-color: var(--muted); }
+      #count-pill { margin-left: auto; font-size: 12px; color: var(--muted); }
+
+      .toolbar { display: flex; flex-wrap: wrap; gap: 14px; padding: 14px 20px; border-bottom: 1px solid var(--border); background: var(--surface); align-items: flex-end; flex-shrink: 0; }
+      .tb-field { display: flex; flex-direction: column; gap: 4px; }
+      .tb-label { font-size: 10.5px; font-weight: 600; color: var(--muted); }
+      .tb-grow { flex: 1; min-width: 280px; }
+      textarea, select, input { font-family: var(--font); font-size: 12.5px; color: var(--text); background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 10px; }
+      textarea { width: 100%; min-height: 46px; resize: vertical; line-height: 1.45; }
+      textarea::placeholder { color: var(--muted); }
+      textarea:focus, select:focus, input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(99,102,241,0.18); }
+      input[type=number] { width: 64px; }
+      select { min-width: 150px; }
+
+      .btn { padding: 9px 14px; font-family: var(--font); font-size: 12px; font-weight: 600; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--card); color: var(--text); cursor: pointer; transition: background .15s, border-color .15s, color .15s, transform .08s; white-space: nowrap; }
+      .btn:hover { background: var(--card-hover); border-color: var(--accent); }
+      .btn:active { transform: scale(.98); }
+      .btn:disabled { opacity: .5; cursor: default; }
+      .btn-primary { background: var(--grad); border-color: transparent; color: #fff; box-shadow: 0 4px 14px rgba(99,102,241,.25); }
+      .btn-primary:hover { filter: brightness(1.08); border-color: transparent; }
+      .btn-danger:hover { border-color: var(--red); color: var(--red); }
+
+      .table-wrap { flex: 1; overflow: auto; padding: 0 20px 20px; }
+      table { width: 100%; border-collapse: separate; border-spacing: 0; margin-top: 14px; }
+      thead th { position: sticky; top: 0; z-index: 2; background: var(--surface); padding: 10px 12px; text-align: left; font-size: 11px; font-weight: 700; color: var(--muted); border-bottom: 1px solid var(--border); }
+      tbody td { padding: 10px 12px; border-bottom: 1px solid rgba(42,42,77,.55); vertical-align: top; }
+      tbody tr:hover { background: rgba(99,102,241,.05); }
+      tbody tr.running { background: rgba(245,158,11,.06); }
+      .c-chk, .c-stt, .c-run { width: 1%; white-space: nowrap; text-align: center; }
+      .c-refs { width: 200px; }
+      .c-prompt { min-width: 320px; }
+      .c-result { width: 220px; }
+      .c-prog { width: 150px; }
+      .stt { font-family: var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+
+      .icon-btn { width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--text); cursor: pointer; font-size: 14px; transition: border-color .15s, color .15s, background .15s; }
+      .icon-btn:hover { border-color: var(--accent); color: var(--accent); }
+      .icon-btn.run { color: var(--green); }
+
+      .row-prompt { width: 100%; min-height: 70px; font-size: 12px; }
+
+      .refs { display: flex; flex-wrap: wrap; gap: 5px; }
+      .ref-thumb { position: relative; width: 40px; height: 40px; border-radius: 5px; overflow: hidden; border: 1px solid var(--border); }
+      .ref-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+      .ref-thumb .rx { position: absolute; top: 1px; right: 1px; width: 14px; height: 14px; border-radius: 50%; background: rgba(0,0,0,.7); color: #fff; font-size: 10px; line-height: 14px; text-align: center; cursor: pointer; }
+      .ref-add { width: 40px; height: 40px; border-radius: 5px; border: 1px dashed var(--border); background: var(--card); color: var(--muted); cursor: pointer; font-size: 16px; display: inline-flex; align-items: center; justify-content: center; }
+      .ref-add:hover { border-color: var(--accent); color: var(--accent); }
+
+      .result-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 5px; }
+      .result-grid a { display: block; position: relative; }
+      .result-grid img, .result-grid video { width: 100%; height: 90px; object-fit: contain; background: #000; border: 1px solid var(--border); border-radius: 5px; display: block; }
+      .result-empty { color: var(--muted); font-size: 11px; }
+
+      .badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+      .b-idle { background: var(--border); color: var(--muted); }
+      .b-queued { background: rgba(139,143,176,.18); color: var(--muted); }
+      .b-running { background: rgba(245,158,11,.15); color: var(--yellow); }
+      .b-done { background: rgba(34,197,94,.15); color: var(--green); }
+      .b-failed { background: rgba(239,68,68,.15); color: var(--red); }
+      .prog-msg { font-size: 10px; color: var(--muted); margin-top: 4px; word-break: break-word; }
+      .prog-msg.err { color: var(--red); }
+      .prog-actions { display: flex; gap: 6px; margin-top: 6px; }
+
+      .empty { padding: 40px; text-align: center; color: var(--muted); }
+
+      /* Ref picker modal */
+      .modal { display: none; position: fixed; inset: 0; background: rgba(5,5,15,.7); backdrop-filter: blur(2px); z-index: 100; align-items: center; justify-content: center; }
+      .modal.open { display: flex; }
+      .modal-panel { width: 640px; max-width: 92vw; max-height: 84vh; background: var(--card); border: 1px solid var(--border); border-radius: 14px; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,.5); }
+      .modal-head { display: flex; align-items: center; gap: 10px; padding: 13px 16px; background: var(--surface); border-bottom: 1px solid var(--border); font-weight: 700; }
+      .modal-head .close { margin-left: auto; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 18px; }
+      .modal-head .close:hover { color: var(--text); }
+      .modal-body { padding: 14px 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+      .pg { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
+      .pg .pm { position: relative; aspect-ratio: 1; border-radius: 5px; overflow: hidden; border: 2px solid transparent; cursor: pointer; }
+      .pg .pm:hover { border-color: var(--border); }
+      .pg .pm.sel { border-color: var(--accent); }
+      .pg .pm img { width: 100%; height: 100%; object-fit: cover; display: block; }
+      .modal-hint { font-size: 11px; color: var(--muted); }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="title"><span>Flow Helper</span> <small>· Nhiều prompt</small></div>
+      <div id="count-pill">0 dòng</div>
+    </header>
+
+    <div class="toolbar">
+      <div class="tb-field tb-grow">
+        <span class="tb-label">Dán nhiều prompt (mỗi dòng = 1 dòng tạo)</span>
+        <textarea id="paste" placeholder="Prompt 1&#10;Prompt 2&#10;Prompt 3…"></textarea>
+      </div>
+      <div class="tb-field"><span class="tb-label">&nbsp;</span><button class="btn" id="btn-add-paste">+ Thêm từ ô trên</button></div>
+      <div class="tb-field"><span class="tb-label">&nbsp;</span><button class="btn" id="btn-add-row">+ Dòng trống</button></div>
+
+      <div class="tb-field">
+        <span class="tb-label">Loại</span>
+        <select id="s-kind"><option value="image">Image</option><option value="video">Video</option></select>
+      </div>
+      <div class="tb-field">
+        <span class="tb-label">Model</span>
+        <select id="s-model"><option value="nano_banana_pro">🍌 Nano Banana Pro</option><option value="narwhal_display">🍌 Nano Banana 2</option></select>
+      </div>
+      <div class="tb-field">
+        <span class="tb-label">Orientation</span>
+        <select id="s-orient"><option value="landscape">Landscape</option><option value="portrait" selected>Portrait</option><option value="square">Square</option></select>
+      </div>
+      <div class="tb-field"><span class="tb-label">Số lượng</span><input id="s-count" type="number" min="1" max="8" value="1" /></div>
+      <div class="tb-field"><span class="tb-label">Max attempts</span><input id="s-attempts" type="number" min="1" max="10" value="3" /></div>
+      <div class="tb-field"><span class="tb-label">Đồng thời</span><input id="s-concurrency" type="number" min="1" max="5" value="3" /></div>
+
+      <div class="tb-field"><span class="tb-label">&nbsp;</span><button class="btn btn-primary" id="btn-run-all">▶ Chạy tất cả</button></div>
+      <div class="tb-field"><span class="tb-label">&nbsp;</span><button class="btn btn-danger" id="btn-del-selected">Xóa đã chọn</button></div>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th class="c-chk"><input type="checkbox" id="chk-all" /></th>
+            <th class="c-stt">STT</th>
+            <th class="c-run">▶</th>
+            <th class="c-refs">Ảnh tham chiếu</th>
+            <th class="c-prompt">Prompt</th>
+            <th class="c-result">Kết quả</th>
+            <th class="c-prog">Tiến độ</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <div class="empty" id="empty">Chưa có dòng nào. Dán prompt ở trên rồi bấm "+ Thêm từ ô trên".</div>
+    </div>
+
+    <input type="file" id="ref-file" accept="image/*" multiple hidden />
+    <div class="modal" id="ref-modal">
+      <div class="modal-panel">
+        <div class="modal-head">
+          <span id="ref-modal-title">Ảnh tham chiếu</span>
+          <button class="close" id="ref-modal-close">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div style="display:flex; gap:8px; align-items:center;">
+            <button class="btn" id="ref-upload">+ Upload</button>
+            <button class="btn" id="ref-load-project">Tải từ project</button>
+            <span class="modal-hint" id="ref-modal-hint">Tối đa 9 ảnh.</span>
+          </div>
+          <div class="refs" id="ref-current"></div>
+          <div class="pg" id="ref-pg"></div>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

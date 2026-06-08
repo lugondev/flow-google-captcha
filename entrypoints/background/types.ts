@@ -79,6 +79,8 @@ export interface GenerateParams {
   references?: RefImage[];
   projectId?: string; // from the Flow tab URL — bind request to current project
   workflowId?: string; // from /edit/<id> — bind request to current workflow
+  clientId?: string; // batch row id — echoed back in GEN_PROGRESS so the caller can route progress
+  noReload?: boolean; // batch parallel mode: don't reload the shared Flow tab on 403 (would break sibling rows)
 }
 
 export interface GenResultMedia {
