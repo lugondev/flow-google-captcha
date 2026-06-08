@@ -77,9 +77,9 @@ function updateStatus(data: StatusData | null | undefined): void {
     const el = document.getElementById(id);
     if (el) el.textContent = String(v);
   };
-  set('m-total', m.requestCount || 0);
-  set('m-success', m.successCount || 0);
-  set('m-failed', m.failedCount || 0);
+  set('log-total', m.requestCount || 0);
+  set('log-success', m.successCount || 0);
+  set('log-failed', m.failedCount || 0);
 }
 
 let flowReady = false;
@@ -121,7 +121,7 @@ function clearData(): void {
   const promptEl = document.getElementById('gen-prompt') as HTMLTextAreaElement | null;
   const countEl = document.getElementById('gen-count') as HTMLInputElement | null;
   const attemptsEl = document.getElementById('gen-attempts') as HTMLInputElement | null;
-  const modelEl = document.getElementById('gen-model') as HTMLSelectElement | null;
+  const modelEl = document.getElementById('img-model') as HTMLSelectElement | null;
   if (promptEl) promptEl.value = '';
   if (countEl) countEl.value = '1';
   if (attemptsEl) attemptsEl.value = '3';
@@ -204,9 +204,9 @@ function showRequestDetail(reqId: string): void {
   const entry = _logEntries.find((e) => e.id === reqId);
   if (!entry) return;
 
-  const overlay = document.getElementById('detail-overlay');
-  const title = document.getElementById('detail-title');
-  const body = document.getElementById('detail-body');
+  const overlay = document.getElementById('log-detail');
+  const title = document.getElementById('log-detail-title');
+  const body = document.getElementById('log-detail-body');
   if (!overlay || !title || !body) return;
 
   title.textContent = `Request ${String(reqId).slice(0, 12)}`;
@@ -238,11 +238,11 @@ function showRequestDetail(reqId: string): void {
   overlay.classList.add('open');
 }
 
-document.getElementById('detail-close')?.addEventListener('click', () => {
-  document.getElementById('detail-overlay')?.classList.remove('open');
+document.getElementById('log-detail-close')?.addEventListener('click', () => {
+  document.getElementById('log-detail')?.classList.remove('open');
 });
 
-document.getElementById('detail-overlay')?.addEventListener('click', (e) => {
+document.getElementById('log-detail')?.addEventListener('click', (e) => {
   const target = e.currentTarget as HTMLElement | null;
   if (target && e.target === target) target.classList.remove('open');
 });
@@ -526,14 +526,14 @@ function toggleModelFields(): void {
     const el = document.getElementById(id);
     if (el) el.style.display = show ? '' : 'none';
   };
-  set('fld-image-model', !isVideo);
-  set('fld-video-model', isVideo);
+  set('img-fld-model', !isVideo);
+  set('vid-fld-model', isVideo);
   const fam = videoFamilies.find((f) => f.id === genVideoModel);
-  set('fld-video-len', isVideo && !!fam && fam.durations.length > 1);
+  set('vid-fld-len', isVideo && !!fam && fam.durations.length > 1);
 }
 
 function fillVideoDurations(): void {
-  const sel = document.getElementById('gen-vlen') as HTMLSelectElement | null;
+  const sel = document.getElementById('vid-len') as HTMLSelectElement | null;
   if (!sel) return;
   const fam = videoFamilies.find((f) => f.id === genVideoModel);
   const durs = fam?.durations || [];
@@ -547,7 +547,7 @@ function populateVideoModels(): void {
   chrome.runtime.sendMessage({ type: 'GET_VIDEO_MODELS' }, (data) => {
     if (chrome.runtime.lastError || !data) return;
     videoFamilies = (data.families as VideoFamily[]) || [];
-    const sel = document.getElementById('gen-vmodel') as HTMLSelectElement | null;
+    const sel = document.getElementById('vid-model') as HTMLSelectElement | null;
     if (sel) {
       sel.innerHTML = videoFamilies.map((f) => `<option value="${escHtml(f.id)}">${escHtml(f.displayName)}</option>`).join('');
       if (!genVideoModel || !videoFamilies.some((f) => f.id === genVideoModel)) genVideoModel = videoFamilies[0]?.id || '';
@@ -572,7 +572,7 @@ function updateSettingsSummary(): void {
     const fam = videoFamilies.find((f) => f.id === genVideoModel);
     model = (fam?.displayName || 'Video') + (genVideoLen ? ` ${genVideoLen}s` : '');
   } else {
-    const modelEl = document.getElementById('gen-model') as HTMLSelectElement | null;
+    const modelEl = document.getElementById('img-model') as HTMLSelectElement | null;
     model = modelEl?.selectedOptions[0]?.textContent || modelEl?.value || '—';
   }
   el.innerHTML =
@@ -609,23 +609,23 @@ function initGeneratePanel(): void {
   document.getElementById('settings-toggle')?.addEventListener('click', () => {
     document.getElementById('settings-card')?.classList.toggle('open');
   });
-  document.getElementById('gen-model')?.addEventListener('change', updateSettingsSummary);
+  document.getElementById('img-model')?.addEventListener('change', updateSettingsSummary);
   document.getElementById('gen-count')?.addEventListener('input', updateSettingsSummary);
   document.getElementById('gen-attempts')?.addEventListener('input', updateSettingsSummary);
-  document.getElementById('gen-vmodel')?.addEventListener('change', () => {
-    genVideoModel = (document.getElementById('gen-vmodel') as HTMLSelectElement).value;
+  document.getElementById('vid-model')?.addEventListener('change', () => {
+    genVideoModel = (document.getElementById('vid-model') as HTMLSelectElement).value;
     fillVideoDurations();
     updateSettingsSummary();
   });
-  document.getElementById('gen-vlen')?.addEventListener('change', () => {
-    const v = (document.getElementById('gen-vlen') as HTMLSelectElement).value;
+  document.getElementById('vid-len')?.addEventListener('change', () => {
+    const v = (document.getElementById('vid-len') as HTMLSelectElement).value;
     genVideoLen = v ? Number(v) : undefined;
     updateSettingsSummary();
   });
   populateVideoModels();
 
   const promptEl = document.getElementById('gen-prompt') as HTMLTextAreaElement | null;
-  const modelEl = document.getElementById('gen-model') as HTMLSelectElement | null;
+  const modelEl = document.getElementById('img-model') as HTMLSelectElement | null;
   const countEl = document.getElementById('gen-count') as HTMLInputElement | null;
   const attemptsEl = document.getElementById('gen-attempts') as HTMLInputElement | null;
 
@@ -738,6 +738,10 @@ document.getElementById('btn-clear')?.addEventListener('click', clearData);
 
 document.getElementById('btn-batch')?.addEventListener('click', () => {
   chrome.tabs.create({ url: chrome.runtime.getURL('batch.html') });
+});
+
+document.getElementById('btn-workflow')?.addEventListener('click', () => {
+  chrome.tabs.create({ url: chrome.runtime.getURL('workflow.html') });
 });
 
 document.getElementById('btn-flow')?.addEventListener('click', () => {

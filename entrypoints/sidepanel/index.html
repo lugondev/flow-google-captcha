@@ -270,6 +270,7 @@
       <div class="header-title"><span>Flow Helper</span></div>
       <button id="btn-media" class="header-btn" title="Quản lý media của project">📁 Media</button>
       <button id="btn-batch" class="header-btn" title="Mở bảng tạo nhiều prompt">⊞ Nhiều prompt</button>
+      <button id="btn-workflow" class="header-btn" title="Mở Workflow canvas">✦ Workflow</button>
     </header>
 
     <div class="gen">
@@ -302,20 +303,20 @@
           <span class="settings-caret">▶</span>
         </div>
         <div class="settings-body">
-          <div class="gen-field" id="fld-image-model">
+          <div class="gen-field" id="img-fld-model">
             <span class="gen-label">Model</span>
-            <select id="gen-model">
+            <select id="img-model">
               <option value="nano_banana_pro">🍌 Nano Banana Pro</option>
               <option value="narwhal_display">🍌 Nano Banana 2</option>
             </select>
           </div>
-          <div class="gen-field" id="fld-video-model" style="display:none">
+          <div class="gen-field" id="vid-fld-model" style="display:none">
             <span class="gen-label">Video model</span>
-            <select id="gen-vmodel"></select>
+            <select id="vid-model"></select>
           </div>
-          <div class="gen-field" id="fld-video-len" style="display:none">
+          <div class="gen-field" id="vid-fld-len" style="display:none">
             <span class="gen-label">Thời lượng</span>
-            <select id="gen-vlen"></select>
+            <select id="vid-len"></select>
           </div>
           <div class="gen-field">
             <span class="gen-label">Orientation</span>
@@ -369,9 +370,9 @@
     </div>
 
     <div class="metrics">
-      <div class="metric-card"><div class="metric-value" id="m-total">0</div><div class="metric-label">Total</div></div>
-      <div class="metric-card"><div class="metric-value green" id="m-success">0</div><div class="metric-label">Success</div></div>
-      <div class="metric-card"><div class="metric-value red" id="m-failed">0</div><div class="metric-label">Failed</div></div>
+      <div class="metric-card"><div class="metric-value" id="log-total">0</div><div class="metric-label">Total</div></div>
+      <div class="metric-card"><div class="metric-value green" id="log-success">0</div><div class="metric-label">Success</div></div>
+      <div class="metric-card"><div class="metric-value red" id="log-failed">0</div><div class="metric-label">Failed</div></div>
     </div>
     </div><!-- /.main -->
 
@@ -394,13 +395,13 @@
     </div>
     </footer>
 
-    <div class="detail-overlay" id="detail-overlay">
+    <div class="detail-overlay" id="log-detail">
       <div class="detail-panel">
         <div class="detail-header">
-          <span id="detail-title">Request Detail</span>
-          <button class="detail-close" id="detail-close">&times;</button>
+          <span id="log-detail-title">Request Detail</span>
+          <button class="detail-close" id="log-detail-close">&times;</button>
         </div>
-        <div class="detail-body" id="detail-body"></div>
+        <div class="detail-body" id="log-detail-body"></div>
       </div>
     </div>
 

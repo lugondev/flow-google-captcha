@@ -27,7 +27,7 @@
       .title::before { content: '✦'; background: var(--grad); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
       .title span { background: var(--grad); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
       .title small { color: var(--muted); font-weight: 500; font-size: 12px; -webkit-text-fill-color: var(--muted); }
-      #count-pill { margin-left: auto; font-size: 12px; color: var(--muted); }
+      #batch-count-pill { margin-left: auto; font-size: 12px; color: var(--muted); }
 
       .toolbar { display: flex; flex-wrap: wrap; gap: 14px; padding: 14px 20px; border-bottom: 1px solid var(--border); background: var(--surface); align-items: flex-end; flex-shrink: 0; }
       .tb-field { display: flex; flex-direction: column; gap: 4px; }
@@ -111,7 +111,7 @@
       .global-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 8px 20px; border-bottom: 1px solid var(--border); background: var(--surface); flex-shrink: 0; }
       .gb-label { font-size: 12px; font-weight: 600; color: var(--text); white-space: nowrap; }
       .gb-label .muted { color: var(--muted); font-weight: 400; }
-      #global-hint { font-size: 11px; color: var(--muted); }
+      #batch-global-hint { font-size: 11px; color: var(--muted); }
 
       /* Collapsible shared settings */
       .settings-bar { padding: 10px 20px; border-bottom: 1px solid var(--border); background: var(--surface); flex-shrink: 0; }
@@ -128,10 +128,10 @@
       /* Fixed footer (token + actions + credit) */
       .footer { flex-shrink: 0; border-top: 1px solid var(--border); background: var(--surface); }
       .state-bar { display: flex; align-items: center; gap: 8px; padding: 6px 20px; border-bottom: 1px solid var(--border); font-size: 10px; color: var(--muted); font-weight: 600; letter-spacing: 0.04em; }
-      #token-status { margin-left: auto; font-weight: 500; }
-      #token-status.ok { color: var(--green); }
-      #token-status.bad { color: var(--red); }
-      #token-status.warn { color: var(--yellow); }
+      #batch-token { margin-left: auto; font-weight: 500; }
+      #batch-token.ok { color: var(--green); }
+      #batch-token.bad { color: var(--red); }
+      #batch-token.warn { color: var(--yellow); }
       .f-actions { display: flex; gap: 8px; padding: 8px 20px; }
       .f-actions .btn { flex: 0 0 auto; }
       .signature { padding: 5px 20px; text-align: center; font-size: 9px; color: var(--muted); background: var(--bg); border-top: 1px solid var(--border); }
@@ -157,68 +157,69 @@
   <body>
     <header>
       <div class="title"><span>Flow Helper</span> <small>· Nhiều prompt</small></div>
-      <div id="count-pill">0 dòng</div>
+      <div id="batch-count-pill">0 dòng</div>
     </header>
 
     <div class="project-bar">
-      <span class="pb-item">Project <select id="pi-project" class="pb-select"><option value="">(tab hiện tại)</option></select>
-        <button class="pb-btn" id="pi-rename" title="Đổi tên project">✏️</button></span>
-      <span class="pb-item">Workflow <select id="pi-workflow" class="pb-select"><option value="">(mặc định)</option></select>
-        <input id="pi-wf-manual" class="pb-input" placeholder="hoặc nhập workflowId…" /></span>
+      <span class="pb-item">Project <select id="batch-project" class="pb-select"><option value="">(tab hiện tại)</option></select>
+        <button class="pb-btn" id="batch-rename" title="Đổi tên project">✏️</button></span>
+      <span class="pb-item">Workflow <select id="batch-workflow" class="pb-select"><option value="">(mặc định)</option></select>
+        <input id="batch-wf-manual" class="pb-input" placeholder="hoặc nhập workflowId…" /></span>
       <span class="pb-spacer"></span>
-      <button class="pb-btn" id="pi-media">📁 Media</button>
-      <button class="pb-btn" id="pi-refresh" title="Làm mới danh sách project/workflow">↻ Làm mới</button>
-      <button class="pb-btn" id="pi-open">↗ Mở tab Flow</button>
+      <button class="pb-btn" id="batch-media">📁 Media</button>
+      <button class="pb-btn" id="batch-refresh" title="Làm mới danh sách project/workflow">↻ Làm mới</button>
+      <button class="pb-btn" id="batch-open">↗ Mở tab Flow</button>
+      <button class="pb-btn" id="batch-open-wf">✦ Workflow</button>
     </div>
 
     <div class="toolbar">
       <div class="tb-field tb-grow">
         <span class="tb-label">Dán nhiều prompt (mỗi dòng = 1 dòng tạo)</span>
-        <textarea id="paste" placeholder="Prompt 1&#10;Prompt 2&#10;Prompt 3…"></textarea>
+        <textarea id="batch-paste" placeholder="Prompt 1&#10;Prompt 2&#10;Prompt 3…"></textarea>
       </div>
-      <div class="tb-field"><span class="tb-label">&nbsp;</span><button class="btn" id="btn-add-paste">+ Thêm từ ô trên</button></div>
-      <div class="tb-field"><span class="tb-label">&nbsp;</span><button class="btn" id="btn-add-row">+ Dòng trống</button></div>
-      <div class="tb-field"><span class="tb-label">&nbsp;</span><button class="btn btn-primary" id="btn-run-all">▶ Chạy tất cả</button></div>
-      <div class="tb-field"><span class="tb-label">&nbsp;</span><button class="btn btn-stop" id="btn-stop-all" disabled>⬛ Dừng</button></div>
-      <div class="tb-field"><span class="tb-label">&nbsp;</span><button class="btn btn-danger" id="btn-del-selected">Xóa đã chọn</button></div>
+      <div class="tb-field"><span class="tb-label">&nbsp;</span><button class="btn" id="batch-add-paste">+ Thêm từ ô trên</button></div>
+      <div class="tb-field"><span class="tb-label">&nbsp;</span><button class="btn" id="batch-add-row">+ Dòng trống</button></div>
+      <div class="tb-field"><span class="tb-label">&nbsp;</span><button class="btn btn-primary" id="batch-run-all">▶ Chạy tất cả</button></div>
+      <div class="tb-field"><span class="tb-label">&nbsp;</span><button class="btn btn-stop" id="batch-stop-all" disabled>⬛ Dừng</button></div>
+      <div class="tb-field"><span class="tb-label">&nbsp;</span><button class="btn btn-danger" id="batch-del-selected">Xóa đã chọn</button></div>
     </div>
 
     <div class="global-bar">
       <span class="gb-label">🎨 Ảnh style chung <span class="muted">(tự áp cho mọi dòng)</span></span>
-      <div class="refs" id="global-refs"></div>
-      <span id="global-hint"></span>
+      <div class="refs" id="batch-global-refs"></div>
+      <span id="batch-global-hint"></span>
     </div>
 
     <div class="settings-bar">
-      <div class="settings-card" id="settings-card">
-        <div class="settings-head" id="settings-toggle">
+      <div class="settings-card" id="batch-settings-card">
+        <div class="settings-head" id="batch-settings-toggle">
           <span class="settings-caret">▶</span>
-          <span class="settings-summary" id="settings-summary">Cài đặt chung</span>
+          <span class="settings-summary" id="batch-settings-summary">Cài đặt chung</span>
         </div>
         <div class="settings-body">
           <div class="tb-field">
             <span class="tb-label">Loại</span>
-            <select id="s-kind"><option value="image">Image</option><option value="video">Video</option></select>
+            <select id="batch-kind"><option value="image">Image</option><option value="video">Video</option></select>
           </div>
-          <div class="tb-field" id="fld-image-model">
+          <div class="tb-field" id="batch-fld-img-model">
             <span class="tb-label">Model</span>
-            <select id="s-model"><option value="nano_banana_pro">🍌 Nano Banana Pro</option><option value="narwhal_display">🍌 Nano Banana 2</option></select>
+            <select id="batch-img-model"><option value="nano_banana_pro">🍌 Nano Banana Pro</option><option value="narwhal_display">🍌 Nano Banana 2</option></select>
           </div>
-          <div class="tb-field" id="fld-video-model" style="display:none">
+          <div class="tb-field" id="batch-fld-vid-model" style="display:none">
             <span class="tb-label">Video model</span>
-            <select id="s-vmodel"></select>
+            <select id="batch-vid-model"></select>
           </div>
-          <div class="tb-field" id="fld-video-len" style="display:none">
+          <div class="tb-field" id="batch-fld-vid-len" style="display:none">
             <span class="tb-label">Thời lượng</span>
-            <select id="s-vlen"></select>
+            <select id="batch-vid-len"></select>
           </div>
           <div class="tb-field">
             <span class="tb-label">Orientation</span>
-            <select id="s-orient"><option value="landscape">Landscape</option><option value="portrait" selected>Portrait</option><option value="square">Square</option></select>
+            <select id="batch-orient"><option value="landscape">Landscape</option><option value="portrait" selected>Portrait</option><option value="square">Square</option></select>
           </div>
-          <div class="tb-field"><span class="tb-label">Số lượng</span><input id="s-count" type="number" min="1" max="8" value="1" /></div>
-          <div class="tb-field"><span class="tb-label">Max attempts</span><input id="s-attempts" type="number" min="1" max="10" value="3" /></div>
-          <div class="tb-field"><span class="tb-label">Đồng thời</span><input id="s-concurrency" type="number" min="1" max="5" value="3" /></div>
+          <div class="tb-field"><span class="tb-label">Số lượng</span><input id="batch-count" type="number" min="1" max="8" value="1" /></div>
+          <div class="tb-field"><span class="tb-label">Max attempts</span><input id="batch-attempts" type="number" min="1" max="10" value="3" /></div>
+          <div class="tb-field"><span class="tb-label">Đồng thời</span><input id="batch-concurrency" type="number" min="1" max="5" value="3" /></div>
         </div>
       </div>
     </div>
@@ -227,7 +228,7 @@
       <table>
         <thead>
           <tr>
-            <th class="c-chk"><input type="checkbox" id="chk-all" /></th>
+            <th class="c-chk"><input type="checkbox" id="batch-chk-all" /></th>
             <th class="c-stt">STT</th>
             <th class="c-run">▶</th>
             <th class="c-refs">Ảnh tham chiếu</th>
@@ -236,15 +237,15 @@
             <th class="c-prog">Tiến độ</th>
           </tr>
         </thead>
-        <tbody id="rows"></tbody>
+        <tbody id="batch-rows"></tbody>
       </table>
-      <div class="empty" id="empty">Chưa có dòng nào. Dán prompt ở trên rồi bấm "+ Thêm từ ô trên".</div>
+      <div class="empty" id="batch-empty">Chưa có dòng nào. Dán prompt ở trên rồi bấm "+ Thêm từ ô trên".</div>
     </div>
 
     <footer class="footer">
-      <div class="state-bar">TOKEN <span id="token-status" class="bad">no token</span></div>
+      <div class="state-bar">TOKEN <span id="batch-token" class="bad">no token</span></div>
       <div class="f-actions">
-        <button class="btn btn-danger" id="btn-clear-batch" title="Xóa toàn bộ rows, refs, settings về mặc định">↺ Reset dữ liệu</button>
+        <button class="btn btn-danger" id="batch-clear" title="Xóa toàn bộ rows, refs, settings về mặc định">↺ Reset dữ liệu</button>
       </div>
       <div class="signature">
         <a href="https://github.com/lugondev/flow-google-captcha" target="_blank" rel="noopener">
@@ -253,21 +254,21 @@
       </div>
     </footer>
 
-    <input type="file" id="ref-file" accept="image/*" multiple hidden />
-    <div class="modal" id="ref-modal">
+    <input type="file" id="batch-ref-file" accept="image/*" multiple hidden />
+    <div class="modal" id="batch-ref-modal">
       <div class="modal-panel">
         <div class="modal-head">
-          <span id="ref-modal-title">Ảnh tham chiếu</span>
-          <button class="close" id="ref-modal-close">&times;</button>
+          <span id="batch-ref-modal-title">Ảnh tham chiếu</span>
+          <button class="close" id="batch-ref-modal-close">&times;</button>
         </div>
         <div class="modal-body">
           <div style="display:flex; gap:8px; align-items:center;">
-            <button class="btn" id="ref-upload">+ Upload</button>
-            <button class="btn" id="ref-load-project">Tải từ project</button>
-            <span class="modal-hint" id="ref-modal-hint">Tối đa 9 ảnh.</span>
+            <button class="btn" id="batch-ref-upload">+ Upload</button>
+            <button class="btn" id="batch-ref-load-project">Tải từ project</button>
+            <span class="modal-hint" id="batch-ref-modal-hint">Tối đa 9 ảnh.</span>
           </div>
-          <div class="refs" id="ref-current"></div>
-          <div class="pg" id="ref-pg"></div>
+          <div class="refs" id="batch-ref-current"></div>
+          <div class="pg" id="batch-ref-pg"></div>
         </div>
       </div>
     </div>
