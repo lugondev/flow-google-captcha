@@ -1,5 +1,5 @@
 /**
- * Flow Kit — Background Service Worker Types
+ * Flow Helper — Background Service Worker Types
  */
 
 export type AppState = 'off' | 'idle' | 'running';
@@ -21,6 +21,8 @@ export interface RequestLogEntry {
   status: RequestLogStatus;
   error: string | null;
   outputUrl: string | null;
+  /** Generated media for this request, shown inline on the log row when done. */
+  outputs?: { type: 'image' | 'video'; url: string }[];
   url?: string;
   httpStatus?: number;
   payloadSummary?: string;
@@ -75,6 +77,8 @@ export interface GenerateParams {
   count?: number;
   maxAttempts: number;
   references?: RefImage[];
+  projectId?: string; // from the Flow tab URL — bind request to current project
+  workflowId?: string; // from /edit/<id> — bind request to current workflow
 }
 
 export interface GenResultMedia {

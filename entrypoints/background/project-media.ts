@@ -21,6 +21,7 @@ export interface ProjectMediaItem {
   prompt: string;
   model: string;
   aspectRatio: string;
+  workflowId?: string;
   url?: string; // serving/signed URL if present in the payload
   width?: number;
   height?: number;
@@ -30,6 +31,12 @@ export interface ProjectMediaItem {
 export function projectIdFromUrl(url: string | undefined): string | null {
   if (!url) return null;
   return url.match(/\/project\/([0-9a-f-]{36})/)?.[1] ?? null;
+}
+
+/** Pull the current workflowId out of a Flow tab URL: …/edit/<id> */
+export function workflowIdFromUrl(url: string | undefined): string | null {
+  if (!url) return null;
+  return url.match(/\/edit\/([0-9a-f-]{36})/)?.[1] ?? null;
 }
 
 export async function fetchProjectMedia(projectId: string): Promise<ProjectMediaItem[]> {
@@ -65,14 +72,56 @@ export async function fetchProjectMedia(projectId: string): Promise<ProjectMedia
     const item = parseMedia(m as Record<string, unknown>, urlByUuid);
     if (item) items.push(item);
   }
-
-  // Resolve a displayable link for items the payload didn't already include,
-  // via media.getMediaUrlRedirect (response carries the GCS `location`).
-  await resolveLocations(items.filter((it) => !it.url));
-
-  const withUrl = items.filter((it) => it.url).length;
-  console.log(`[FlowGen] projectInitialData → ${items.length} media, ${withUrl} with URL`);
+  console.log(`[FlowGen] projectInitialData → ${items.length} media`);
   return items;
+}
+
+/** Resolve displayable links (media.getMediaUrlRedirect) for items lacking one,
+ *  in small concurrent batches. Call AFTER filtering to the current workflow. */
+export async function enrichWithUrls(items: ProjectMediaItem[]): Promise<void> {
+  const pending = items.filter((it) => !it.url);
+  for (let i = 0; i < pending.length; i += RESOLVE_CONCURRENCY) {
+    const batch = pending.slice(i, i + RESOLVE_CONCURRENCY);
+    await Promise.all(
+      batch.map(async (it) => {
+        const url = await resolveMediaLocation(it.mediaId);
+        if (url) it.url = url;
+      }),
+    );
+  }
+  console.log(`[FlowGen] resolved ${items.filter((it) => it.url).length}/${items.length} URLs`);
+}
+
+/** Map a model-family id (e.g. nano_banana_pro) → the real `imageModelName`
+ *  enum the request expects, using Flow's own modelConfig. Logs every family
+ *  so the available model keys are visible. */
+let modelMapCache: Record<string, string> | null = null;
+export async function fetchModelMap(projectId: string): Promise<Record<string, string>> {
+  if (modelMapCache) return modelMapCache;
+  try {
+    const input = encodeURIComponent(JSON.stringify({ json: { projectId } }));
+    const resp = await fetch(`${TRPC_BASE}flow.projectInitialData?input=${input}`, {
+      method: 'GET',
+      headers: { accept: '*/*' },
+      credentials: 'include',
+    });
+    if (!resp.ok) return {};
+    const data = await resp.json();
+    const families: Array<Record<string, unknown>> =
+      data?.result?.data?.json?.modelConfig?.imageModelFamilies ?? [];
+    const map: Record<string, string> = {};
+    for (const f of families) {
+      const id = f.id as string | undefined;
+      const usages = f.usages as Array<Record<string, unknown>> | undefined;
+      const key = usages?.[0]?.key as string | undefined;
+      console.log(`[FlowGen] image model family: ${f.displayName} id=${id} key=${key}`);
+      if (id && key) map[id] = key;
+    }
+    if (Object.keys(map).length) modelMapCache = map;
+    return map;
+  } catch {
+    return {};
+  }
 }
 
 /** GET media.getMediaUrlRedirect?name=<id> → the image's GCS `location`. */
@@ -83,9 +132,10 @@ export async function resolveMediaLocation(mediaId: string): Promise<string | nu
       headers: { accept: '*/*' },
       credentials: 'include',
     });
+    // The redirect was followed to the signed CDN asset (flow-content.google /
+    // storage.googleapis.com / …) — that final URL is the displayable link.
+    if (resp.redirected && /^https:\/\//.test(resp.url)) return resp.url;
     if (!resp.ok) return null;
-    // A 302 may have been auto-followed straight to the GCS asset.
-    if (resp.redirected && resp.url.includes('storage.googleapis.com')) return resp.url;
     const text = await resp.text();
     try {
       const loc = deepFindLocation(JSON.parse(text));
@@ -112,19 +162,6 @@ function deepFindLocation(node: unknown): string | null {
     }
   }
   return null;
-}
-
-/** Resolve locations in small concurrent batches to avoid hammering the API. */
-async function resolveLocations(items: ProjectMediaItem[]): Promise<void> {
-  for (let i = 0; i < items.length; i += RESOLVE_CONCURRENCY) {
-    const batch = items.slice(i, i + RESOLVE_CONCURRENCY);
-    await Promise.all(
-      batch.map(async (it) => {
-        const url = await resolveMediaLocation(it.mediaId);
-        if (url) it.url = url;
-      }),
-    );
-  }
 }
 
 function parseMedia(
@@ -165,6 +202,18 @@ function parseMedia(
 
   const uuid = mediaId.match(UUID_RE)?.[0];
   const url = uuid ? urlByUuid.get(uuid) : undefined;
+  const workflowId =
+    (m.workflowId as string | undefined) || (gen?.workflowId as string | undefined);
 
-  return { mediaId, type, prompt, model, aspectRatio, url, width: dims?.width, height: dims?.height };
+  return {
+    mediaId,
+    type,
+    prompt,
+    model,
+    aspectRatio,
+    workflowId,
+    url,
+    width: dims?.width,
+    height: dims?.height,
+  };
 }

@@ -1,4 +1,4 @@
-# Flow Kit — WXT
+# Flow Helper — WXT
 
 A Chrome / Firefox extension that bridges a local Python agent to the Google
 Flow API on [labs.google](https://labs.google). It captures the user's bearer

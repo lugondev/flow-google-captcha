@@ -5,12 +5,12 @@ export default defineConfig({
   outDir: '.output',
 
   manifest: {
-    name: 'Flow Kit',
+    name: 'Flow Helper',
     description:
       'Local agent bridge for Google Flow API — captures tokens, solves reCAPTCHA, proxies API calls.',
     // No default_popup: clicking the toolbar icon opens the side panel directly
     // (wired via sidePanel.setPanelBehavior in the background service worker).
-    action: { default_title: 'Flow Kit' },
+    action: { default_title: 'Flow Helper' },
     permissions: [
       'storage',
       'alarms',
@@ -23,6 +23,8 @@ export default defineConfig({
     host_permissions: [
       'https://labs.google/*',
       'https://aisandbox-pa.googleapis.com/*',
+      'https://storage.googleapis.com/*',
+      'https://flow-content.google/*',
       'http://127.0.0.1:8100/*',
     ],
     web_accessible_resources: [

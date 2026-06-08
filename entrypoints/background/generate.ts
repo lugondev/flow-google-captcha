@@ -10,6 +10,7 @@
 
 import { state } from './state';
 import { solveCaptcha } from './captcha';
+import { resolveMediaLocation } from './project-media';
 import { classifyApiUrl, startLogEntry, markLogSuccess, markLogFailed } from './log';
 import type {
   GenTemplates,
@@ -137,14 +138,43 @@ function swapOrientation(value: string, orient: Orientation): string {
   return value;
 }
 
+function randomSeed(): number {
+  return Math.floor(Math.random() * 1_000_000);
+}
+
+function newUuid(): string {
+  return crypto.randomUUID();
+}
+
+/** Stringify a request body for logging with long token/base64 fields blanked,
+ *  so the meaningful fields are actually visible. */
+function redactForLog(body: unknown): string {
+  const clone = JSON.parse(JSON.stringify(body));
+  const walk = (n: unknown): void => {
+    if (Array.isArray(n)) return n.forEach(walk);
+    if (!n || typeof n !== 'object') return;
+    const o = n as Record<string, unknown>;
+    for (const [k, v] of Object.entries(o)) {
+      if (typeof v === 'string' && v.length > 80) o[k] = `<${v.length} chars>`;
+      else if (typeof v === 'object') walk(v);
+    }
+  };
+  walk(clone);
+  return JSON.stringify(clone, null, 1).slice(0, 1500);
+}
+
 /**
- * Deep-clone the template body and override known dynamic fields by key name.
- * Conservative: only touches keys whose names clearly map to a field, and logs
- * every change so the mapping can be verified against real payloads.
+ * Deep-clone the template body and override the real Flow generation fields,
+ * confirmed against a captured batchGenerateImages request:
+ *   imageModelName · imageAspectRatio · structuredPrompt.parts[].text ·
+ *   clientContext.{workflowId,projectId} · mediaGenerationContext.batchId · seed
+ * Stale identifiers (workflowId/batchId/seed) are refreshed so the request binds
+ * to the current workflow and doesn't collide with the captured one.
  */
 function applyOverrides(body: unknown, p: GenerateParams): unknown {
   const cloned = JSON.parse(JSON.stringify(body));
   const changes: string[] = [];
+  const batchId = newUuid();
 
   const visit = (node: unknown): void => {
     if (Array.isArray(node)) {
@@ -156,33 +186,54 @@ function applyOverrides(body: unknown, p: GenerateParams): unknown {
     for (const [key, val] of Object.entries(obj)) {
       const k = key.toLowerCase();
       if (typeof val === 'string') {
-        if (/prompt|^text$|caption|userinput/.test(k) && p.prompt) {
-          obj[key] = p.prompt;
-          changes.push(`${key}=<prompt>`);
+        if (k === 'imagemodelname' || (k.includes('model') && /name|key/.test(k))) {
+          if (p.model) { obj[key] = p.model; changes.push(`${key}=${p.model}`); }
         } else if (/aspect|orientation/.test(k) && p.orientation) {
           const next = swapOrientation(val, p.orientation);
-          if (next !== val) {
-            obj[key] = next;
-            changes.push(`${key}=${next}`);
-          }
-        } else if (k.includes('model') && p.model) {
-          obj[key] = p.model;
-          changes.push(`${key}=${p.model}`);
+          if (next !== val) { obj[key] = next; changes.push(`${key}=${next}`); }
+        } else if (/prompt|^text$|caption|userinput/.test(k) && p.prompt) {
+          obj[key] = p.prompt;
+          changes.push(`${key}=<prompt>`);
+        } else if (k === 'workflowid' && p.workflowId) {
+          obj[key] = p.workflowId; changes.push('workflowId↻');
+        } else if (k === 'projectid' && p.projectId) {
+          obj[key] = p.projectId;
+        } else if (k === 'batchid') {
+          obj[key] = batchId; changes.push('batchId↻');
         }
       } else if (typeof val === 'number') {
-        if (/samplecount|imagecount|mediacount|numimages|samples/.test(k) && p.count) {
-          obj[key] = p.count;
-          changes.push(`${key}=${p.count}`);
-        }
+        if (k === 'seed') { obj[key] = randomSeed(); changes.push('seed↻'); }
       } else {
         visit(val);
       }
     }
   };
-
   visit(cloned);
-  console.log('[FlowGen] overrides applied:', changes.length ? changes.join(', ') : '(none — verify template field names)');
+
+  // Quantity: Flow batches one entry per image in requests[]. Duplicate the
+  // first request with a fresh seed for each extra image requested.
+  const reqs = (cloned as { requests?: unknown[] }).requests;
+  if (Array.isArray(reqs) && reqs.length && p.count && p.count > 1) {
+    const base = reqs[0];
+    for (let i = 1; i < p.count; i++) {
+      const copy = JSON.parse(JSON.stringify(base));
+      reseed(copy);
+      reqs.push(copy);
+    }
+    changes.push(`count=${p.count}`);
+  }
+
+  console.log('[FlowGen] overrides:', changes.length ? changes.join(', ') : '(none — verify field names)');
   return cloned;
+}
+
+function reseed(node: unknown): void {
+  if (!node || typeof node !== 'object') return;
+  const obj = node as Record<string, unknown>;
+  for (const [key, val] of Object.entries(obj)) {
+    if (key.toLowerCase() === 'seed' && typeof val === 'number') obj[key] = randomSeed();
+    else if (typeof val === 'object') reseed(val);
+  }
 }
 
 // ─── Reference images (upload + project) ──────────────────────
@@ -195,6 +246,28 @@ interface RefHandle {
 }
 
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/;
+const UUID_G = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g;
+
+/**
+ * The image-gen response carries generated media as ids (uuids), not URLs.
+ * Resolve those ids to displayable links via getMediaUrlRedirect — excluding the
+ * ids we already know (project/workflow/refs) so we only fetch real outputs.
+ */
+async function resolveResultMedia(
+  responseText: string,
+  exclude: Set<string>,
+): Promise<GenResultMedia[]> {
+  const ids = [...new Set(responseText.match(UUID_G) ?? [])].filter((id) => !exclude.has(id));
+  const out: GenResultMedia[] = [];
+  for (let i = 0; i < ids.length; i += 6) {
+    const batch = ids.slice(i, i + 6);
+    const urls = await Promise.all(batch.map((id) => resolveMediaLocation(id)));
+    urls.forEach((url) => {
+      if (url) out.push({ type: url.includes('/video/') ? 'video' : 'image', url });
+    });
+  }
+  return out;
+}
 
 /** Upload one base64 image via the captured upload template; parse a handle.
  *  Throws with a specific reason on failure so the panel can show why. */
@@ -304,22 +377,78 @@ function injectReferences(body: unknown, handles: RefHandle[]): void {
       patch(entry);
       return entry;
     }
-    return { mediaId: h.mediaId, url: h.url };
+    // Real Flow shape (confirmed): imageInputs[] = { imageInputType, name }
+    return { imageInputType: 'IMAGE_INPUT_TYPE_BASE_IMAGE', name: h.mediaId };
   });
 
   if (target) {
     target.length = 0;
     target.push(...entries);
     console.log(`[FlowGen] injected ${entries.length} references into existing array`);
+    return;
+  }
+
+  // No reference array in the template (captured without refs): add imageInputs
+  // to each request entry, which is where Flow expects them.
+  const reqs = (body as { requests?: unknown[] }).requests;
+  if (Array.isArray(reqs) && reqs.length) {
+    for (const r of reqs) {
+      if (r && typeof r === 'object') (r as Record<string, unknown>).imageInputs = JSON.parse(JSON.stringify(entries));
+    }
+    console.log(`[FlowGen] injected ${entries.length} references as requests[].imageInputs`);
   } else {
-    (body as Record<string, unknown>).referenceImages = entries;
-    console.warn('[FlowGen] no reference array in template — attached as body.referenceImages (verify schema)');
+    (body as Record<string, unknown>).imageInputs = entries;
+    console.warn('[FlowGen] no requests[] — attached imageInputs at top level (verify schema)');
   }
 }
 
 function pickTemplate(kind: MediaKind, hasRefs: boolean): GenTemplate | undefined {
-  if (kind === 'video' && hasRefs && templates.videoRef) return templates.videoRef;
-  return templates[kind];
+  // Image: we know the real schema — build it from scratch (no capture needed).
+  if (kind === 'image') return templates.image ?? defaultImageTemplate();
+  // Video: schema not yet hardcoded — rely on a captured template.
+  if (hasRefs && templates.videoRef) return templates.videoRef;
+  return templates.video;
+}
+
+/**
+ * Built-in batchGenerateImages template, reconstructed from a real captured
+ * request. All dynamic fields are placeholders that applyOverrides /
+ * injectReferences / injectCaptchaToken fill in (model, prompt, aspectRatio,
+ * workflowId, projectId, batchId, seed, recaptcha token, imageInputs).
+ */
+function defaultImageTemplate(): GenTemplate {
+  const clientContext = () => ({
+    recaptchaContext: { token: '', applicationType: 'RECAPTCHA_APPLICATION_TYPE_WEB' },
+    projectId: '',
+    tool: 'PINHOLE',
+    workflowId: '',
+    sessionId: `;${Date.now()}`,
+  });
+  return {
+    url: 'https://aisandbox-pa.googleapis.com/v1/projects/PROJECT_ID/flowMedia:batchGenerateImages',
+    headers: { 'content-type': 'text/plain;charset=UTF-8' },
+    body: {
+      clientContext: clientContext(),
+      mediaGenerationContext: { batchId: '' },
+      useNewMedia: true,
+      requests: [
+        {
+          clientContext: clientContext(),
+          imageModelName: 'nano_banana_pro',
+          imageAspectRatio: 'IMAGE_ASPECT_RATIO_PORTRAIT',
+          structuredPrompt: { parts: [{ text: '' }] },
+          seed: 0,
+        },
+      ],
+    },
+    capturedAt: 0,
+  };
+}
+
+/** Force the real projectId into the request URL (templates may be stale). */
+function withProjectId(url: string, projectId?: string): string {
+  if (!projectId) return url;
+  return url.replace(/\/projects\/[^/]+\//, `/projects/${projectId}/`);
 }
 
 // ─── Result extraction (best-effort, schema-agnostic) ─────────
@@ -378,6 +507,7 @@ type Attempt =
   | { kind: 'ok'; media: GenResultMedia[]; raw: string }
   | { kind: 'empty'; raw: string } // request fine but no media — do NOT retry
   | { kind: 'token'; error: string } // 401 — refresh then retry
+  | { kind: 'session'; error: string } // 403 — reload Flow tab + re-sync token, then retry
   | { kind: 'blocked'; error: string } // safety block — deterministic, do NOT retry
   | { kind: 'retry'; error: string }; // captcha/4xx/5xx — backoff + retry
 
@@ -386,6 +516,8 @@ type Attempt =
 interface RunDeps {
   onProgress: (p: GenProgress) => void;
   refreshToken: () => Promise<void>;
+  /** Hard session recovery: reload the Flow tab and re-sync the bearer token. */
+  reloadFlowTab: () => Promise<void>;
 }
 
 export async function runGenerate(
@@ -411,8 +543,14 @@ export async function runGenerate(
 
   const max = Math.max(1, params.maxAttempts || 1);
   const captchaAction = kind === 'image' ? 'IMAGE_GENERATION' : 'VIDEO_GENERATION';
+  const submitUrl = withProjectId(template.url, params.projectId);
   let lastError = 'UNKNOWN';
   let lastRaw: string | undefined;
+  // Count 403s across attempts. A single 403 is often transient (stale captcha
+  // binding) and clears on a retry with a fresh captcha — so we DON'T reload the
+  // Flow tab mid-run (that disrupts the session and causes the next 403). Only if
+  // EVERY attempt 403s do we hard-recover (reload tab + re-sync token) afterwards.
+  let count403 = 0;
 
   // Resolve reference images once (upload new files, pass through project ones).
   let refHandles: RefHandle[] = [];
@@ -432,54 +570,68 @@ export async function runGenerate(
     }
   }
 
-  for (let attempt = 1; attempt <= max; attempt++) {
+  // One full attempt: fresh captcha → submit → classify. Returns a terminal
+  // GenResult (success / safety-block) or null to signal "retry".
+  const attemptOnce = async (attempt: number, label: string): Promise<GenResult | null> => {
     const progress = (phase: GenProgress['phase'], message: string) =>
       deps.onProgress({ runId, attempt, maxAttempts: max, phase, message });
 
     const logId = `${runId}-a${attempt}`;
-    startLogEntry(logId, template.url, undefined);
+    startLogEntry(logId, submitUrl, undefined);
 
     try {
       // 1) Fresh captcha each attempt (single-use token)
-      progress('captcha', `Attempt ${attempt}/${max} — giải captcha…`);
+      progress('captcha', `Attempt ${label} — giải captcha…`);
       const cap = await solveCaptcha(logId, captchaAction);
       if (!cap?.token) {
         lastError = `CAPTCHA_FAILED: ${cap?.error ?? 'no token'}`;
         markLogFailed(logId, lastError);
         await backoff(attempt, 429, progress);
-        continue;
+        return null;
       }
 
       // 2) Build + submit
-      progress('submit', `Attempt ${attempt}/${max} — gửi request…`);
+      progress('submit', `Attempt ${label} — gửi request…`);
       const overridden = applyOverrides(template.body, params);
       if (refHandles.length) injectReferences(overridden, refHandles);
       const body = injectCaptchaToken(overridden, cap.token);
-      const res = await submit(template.url, body, template.headers);
+      const res = await submit(submitUrl, body, template.headers);
       lastRaw = res.text.slice(0, 2000);
 
       const outcome = classify(res, kind);
       if (outcome.kind === 'ok') {
-        markLogSuccess(logId, res.status, res.text.slice(0, 300));
+        markLogSuccess(logId, res.status, res.text.slice(0, 300), outcome.media);
         progress('done', `Hoàn tất sau ${attempt} lần thử — ${outcome.media.length} media.`);
         return { runId, ok: true, media: outcome.media, attempts: attempt, rawResponse: res.text.slice(0, 2000) };
       }
       if (outcome.kind === 'empty') {
         // For video, an "empty" submit means we got an operation to poll.
         if (kind === 'video') {
-          progress('poll', `Attempt ${attempt}/${max} — chờ video render…`);
+          progress('poll', `Attempt ${label} — chờ video render…`);
           const polled = await pollVideo(res.text, progress);
           if (polled.length) {
-            markLogSuccess(logId, res.status, 'video ready');
+            markLogSuccess(logId, res.status, 'video ready', polled);
             progress('done', `Video xong sau ${attempt} lần thử.`);
             return { runId, ok: true, media: polled, attempts: attempt, rawResponse: res.text.slice(0, 2000) };
           }
           lastError = 'VIDEO_POLL_TIMEOUT';
           markLogFailed(logId, lastError);
           await backoff(attempt, res.status, progress);
-          continue;
+          return null;
         }
-        // Image with no media = blocked/empty → do not retry, surface raw.
+        // Image: the response carries generated media as ids — resolve to URLs.
+        const exclude = new Set<string>(
+          [params.projectId, params.workflowId, ...refHandles.map((h) => h.mediaId)].filter(
+            (x): x is string => !!x,
+          ),
+        );
+        const resolved = await resolveResultMedia(res.text, exclude);
+        if (resolved.length) {
+          markLogSuccess(logId, res.status, `${resolved.length} media`, resolved);
+          progress('done', `Hoàn tất sau ${attempt} lần thử — ${resolved.length} ảnh.`);
+          return { runId, ok: true, media: resolved, attempts: attempt, rawResponse: res.text.slice(0, 2000) };
+        }
+        console.warn('[FlowGen] response had no resolvable media:\n', res.text.slice(0, 1500));
         markLogSuccess(logId, res.status, res.text.slice(0, 300));
         progress('done', 'Request OK nhưng không có media (có thể bị safety-block).');
         return { runId, ok: true, media: [], attempts: attempt, rawResponse: res.text.slice(0, 2000) };
@@ -502,21 +654,56 @@ export async function runGenerate(
         markLogFailed(logId, lastError, res.status);
         progress('retry', `Token hết hạn — refresh rồi thử lại…`);
         await deps.refreshToken();
-        // token refresh does not consume the attempt budget aggressively;
-        // we still advance the loop but without an extra backoff sleep.
-        continue;
+        return null;
+      }
+      if (outcome.kind === 'session') {
+        // 403 — retry in-tab with a fresh captcha (no reload here).
+        count403 += 1;
+        lastError = outcome.error;
+        markLogFailed(logId, lastError, res.status, res.text.slice(0, 300));
+        progress('retry', `Lỗi 403 (lần ${count403}) — thử lại với captcha mới…`);
+        await backoff(attempt, 403, progress);
+        return null;
       }
       // retry kind
       lastError = outcome.error;
       markLogFailed(logId, lastError, res.status, res.text.slice(0, 300));
       await backoff(attempt, res.status, progress);
+      return null;
     } catch (e) {
       lastError = (e as Error).message || 'GENERATE_FAILED';
       markLogFailed(logId, lastError);
       await backoff(attempt, 0, progress);
+      return null;
     }
+  };
+
+  // Main attempt budget.
+  for (let attempt = 1; attempt <= max; attempt++) {
+    const result = await attemptOnce(attempt, `${attempt}/${max}`);
+    if (result) return result;
   }
 
+  // Every attempt 403'd → the Flow session is stale. Hard-recover (reload tab +
+  // re-sync token), then give it ONE more shot. Still 403 → stop.
+  if (lastError === 'API_403' && count403 >= max) {
+    deps.onProgress({ runId, attempt: max, maxAttempts: max, phase: 'retry', message: `${max} lần đều 403 — reload tab Flow & sync lại token, thử lại lần cuối…` });
+    await deps.reloadFlowTab();
+    count403 = 0;
+    const result = await attemptOnce(max + 1, 'sau reload');
+    if (result) return result;
+    return {
+      runId,
+      ok: false,
+      media: [],
+      attempts: max + 1,
+      error:
+        count403 > 0
+          ? 'API_403: vẫn 403 sau khi reload tab & sync token — dừng. Mở lại Flow và đăng nhập lại.'
+          : lastError,
+      rawResponse: lastRaw,
+    };
+  }
   return { runId, ok: false, media: [], attempts: max, error: lastError, rawResponse: lastRaw };
 }
 
@@ -556,9 +743,15 @@ async function submit(
     body: JSON.stringify(body),
   });
   const text = await resp.text();
+  if (resp.ok) {
+    // A 2xx proves the bearer token is still valid right now — keep the
+    // freshness clock honest so the panel doesn't falsely show "expired"
+    // while generation is clearly working.
+    state.metrics.tokenCapturedAt = Date.now();
+  }
   if (!resp.ok) {
     console.error(`[FlowGen] submit ${resp.status} ${url}\n`, text.slice(0, 600));
-    console.error('[FlowGen] request body sent:\n', JSON.stringify(body).slice(0, 1200));
+    console.error('[FlowGen] request body sent (token redacted):\n', redactForLog(body));
   }
   return { status: resp.status, ok: resp.ok, text };
 }
@@ -570,6 +763,10 @@ function classify(res: SubmitResult, kind: MediaKind): Attempt {
   if (!res.ok) {
     if (/UNSAFE_GENERATION|UNSAFE_|SENSITIVE|safety|blocked|policy/i.test(res.text)) {
       return { kind: 'blocked', error: 'UNSAFE_GENERATION: prompt bị Google chặn vì nội dung không an toàn' };
+    }
+    if (res.status === 403) {
+      // Forbidden — stale session / invalid recaptcha binding. Reload Flow + resync.
+      return { kind: 'session', error: 'API_403' };
     }
     return { kind: 'retry', error: `API_${res.status}` };
   }

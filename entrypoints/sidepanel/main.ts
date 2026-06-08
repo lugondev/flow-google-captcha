@@ -23,6 +23,7 @@ interface LogEntry {
   status?: LogStatus;
   state?: string;
   error?: string | null;
+  outputs?: { type: 'image' | 'video'; url: string }[];
   url?: string;
   httpStatus?: number;
   payloadSummary?: string;
@@ -50,7 +51,7 @@ function updateStatus(data: StatusData | null | undefined): void {
       const ageMs = data.tokenAge || 0;
       const ageMin = Math.round(ageMs / 60_000);
       if (ageMs > 3_600_000) {
-        tokenEl.textContent = 'token expired — open Flow to refresh';
+        tokenEl.textContent = `token cũ ${ageMin}m — mở Flow để refresh`;
         tokenEl.className = 'warn';
       } else {
         tokenEl.textContent = `token synced ${ageMin}m`;
@@ -98,17 +99,32 @@ function updateRequestLog(entries: LogEntry[] | null | undefined): void {
       const time = formatTime(entry.time || entry.timestamp || entry.createdAt);
       const status = entry.status || entry.state || 'pending';
       const error = entry.error || '';
+      const outputs = entry.outputs || [];
 
-      const errorDisplay = error
-        ? `<td class="td-error" title="${escHtml(error)}">${escHtml(truncate(error, 28))}</td>`
-        : `<td class="td-error empty">—</td>`;
+      let resultCell: string;
+      if (status === 'success' && outputs.length) {
+        const thumbs = outputs
+          .slice(0, 3)
+          .map((o) =>
+            o.type === 'video'
+              ? `<a class="log-vid" href="${escHtml(o.url)}" target="_blank" rel="noopener" title="Mở video">▶</a>`
+              : `<a class="log-thumb" href="${escHtml(o.url)}" target="_blank" rel="noopener" title="Xem ảnh"><img src="${escHtml(o.url)}" loading="lazy" /></a>`,
+          )
+          .join('');
+        const more = outputs.length > 3 ? `<span class="log-more">+${outputs.length - 3}</span>` : '';
+        resultCell = `<td class="td-out">${thumbs}${more}</td>`;
+      } else if (error) {
+        resultCell = `<td class="td-error" title="${escHtml(error)}">${escHtml(truncate(error, 28))}</td>`;
+      } else {
+        resultCell = `<td class="td-error empty">—</td>`;
+      }
 
       return `<tr>
         <td class="td-id" data-request-id="${escHtml(entry.id || '')}">${escHtml(shortId)}</td>
         <td class="td-type">${escHtml(type)}</td>
         <td class="td-time">${escHtml(time)}</td>
         <td>${badgeHtml(status)}</td>
-        ${errorDisplay}
+        ${resultCell}
       </tr>`;
     })
     .join('');
@@ -220,7 +236,7 @@ interface GenResult {
 }
 
 let genKind: 'image' | 'video' = 'image';
-let genOrient: 'landscape' | 'portrait' | 'square' = 'landscape';
+let genOrient: 'landscape' | 'portrait' | 'square' = 'portrait';
 let activeRunId: string | null = null;
 
 const FORM_KEY = 'genForm';
@@ -245,7 +261,7 @@ interface ProjectMedia {
   url?: string;
 }
 
-const MAX_REFS = 3;
+const MAX_REFS = 9;
 let selectedRefs: PanelRef[] = [];
 
 function renderRefStrip(): void {
@@ -347,8 +363,9 @@ function refreshProjectPicker(): void {
       return;
     }
 
+    const scopeNote = data.scoped ? 'workflow hiện tại' : 'toàn project';
     grid.innerHTML =
-      `<div class="project-empty" style="grid-column:1/-1">${all.length} media (${imgCount} ảnh, ${vidCount} video) — bấm để chọn</div>` +
+      `<div class="project-empty" style="grid-column:1/-1">${all.length} media · ${scopeNote} (${imgCount} ảnh, ${vidCount} video) — bấm để chọn</div>` +
       all
         .map((m) => {
           const inner = m.url
@@ -397,12 +414,16 @@ function refreshTemplateHint(): void {
     if (chrome.runtime.lastError || !t) return;
     const hint = document.getElementById('tpl-hint');
     if (!hint) return;
-    const have = genKind === 'image' ? t.image : t.video;
-    if (have) {
-      hint.textContent = `✓ Đã có template ${genKind}. Sẵn sàng generate.`;
+    if (genKind === 'image') {
+      hint.textContent = t.imageBuiltIn
+        ? '✓ Image: dùng schema built-in — sẵn sàng generate.'
+        : '✓ Image: sẵn sàng generate.';
+      hint.className = 'tpl-hint ready';
+    } else if (t.video) {
+      hint.textContent = '✓ Video: sẵn sàng generate.';
       hint.className = 'tpl-hint ready';
     } else {
-      hint.textContent = `⚠ Chưa có template ${genKind} — hãy generate 1 lần trên Flow UI để extension học request mẫu.`;
+      hint.textContent = '⚠ Video chưa có schema — generate 1 video trên Flow UI để extension học request mẫu.';
       hint.className = 'tpl-hint';
     }
   });
@@ -430,6 +451,21 @@ function renderResults(media: GenResultMedia[], note?: string): void {
     .join('');
 }
 
+function updateSettingsSummary(): void {
+  const el = document.getElementById('settings-summary');
+  if (!el) return;
+  const modelEl = document.getElementById('gen-model') as HTMLSelectElement | null;
+  const countEl = document.getElementById('gen-count') as HTMLInputElement | null;
+  const attemptsEl = document.getElementById('gen-attempts') as HTMLInputElement | null;
+  const model = modelEl?.selectedOptions[0]?.textContent || modelEl?.value || '—';
+  const orient = genOrient.charAt(0).toUpperCase() + genOrient.slice(1);
+  const count = countEl?.value || '1';
+  const attempts = attemptsEl?.value || '3';
+  const dot = ' <span class="muted">·</span> ';
+  el.innerHTML =
+    escHtml(model) + dot + orient + dot + `${escHtml(count)} ảnh` + dot + `${escHtml(attempts)} thử`;
+}
+
 function selectKind(kind: 'image' | 'video'): void {
   genKind = kind;
   document.querySelectorAll<HTMLElement>('.gen-tab').forEach((tab) => {
@@ -449,11 +485,20 @@ function initGeneratePanel(): void {
       document.querySelectorAll<HTMLElement>('.orient-opt').forEach((o) => {
         o.classList.toggle('active', o === opt);
       });
+      updateSettingsSummary();
     });
   });
 
+  // Collapsible settings card
+  document.getElementById('settings-toggle')?.addEventListener('click', () => {
+    document.getElementById('settings-card')?.classList.toggle('open');
+  });
+  document.getElementById('gen-model')?.addEventListener('change', updateSettingsSummary);
+  document.getElementById('gen-count')?.addEventListener('input', updateSettingsSummary);
+  document.getElementById('gen-attempts')?.addEventListener('input', updateSettingsSummary);
+
   const promptEl = document.getElementById('gen-prompt') as HTMLTextAreaElement | null;
-  const modelEl = document.getElementById('gen-model') as HTMLInputElement | null;
+  const modelEl = document.getElementById('gen-model') as HTMLSelectElement | null;
   const countEl = document.getElementById('gen-count') as HTMLInputElement | null;
   const attemptsEl = document.getElementById('gen-attempts') as HTMLInputElement | null;
 
@@ -472,6 +517,7 @@ function initGeneratePanel(): void {
       );
     }
     if (f.kind) selectKind(f.kind);
+    updateSettingsSummary();
   });
 
   document.getElementById('btn-generate')?.addEventListener('click', () => {
@@ -535,6 +581,7 @@ function initGeneratePanel(): void {
   });
 
   initReferences();
+  updateSettingsSummary();
   refreshTemplateHint();
 }
 

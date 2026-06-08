@@ -7,6 +7,15 @@
  */
 
 import type { RequestLogEntry, RequestLogStatus } from './types';
+import { state, broadcastStatus } from './state';
+
+/** Keep the Total/Success/Failed counters in lock-step with the visible
+ *  request-log rows, then persist + push so the side panel reflects it live. */
+function bumpMetric(field: 'requestCount' | 'successCount' | 'failedCount'): void {
+  state.metrics[field] += 1;
+  void chrome.storage.local.set({ metrics: state.metrics });
+  broadcastStatus();
+}
 
 const VISIBLE_TYPES = new Set<string>([
   'GEN_IMG',
@@ -52,6 +61,7 @@ export function startLogEntry(id: string, url: string, body?: unknown): string {
     };
     requestLog.unshift(entry);
     if (requestLog.length > 100) requestLog.pop();
+    bumpMetric('requestCount');
     broadcastLog();
   }
   return logType;
@@ -61,11 +71,16 @@ export function markLogSuccess(
   id: string,
   httpStatus?: number,
   responseSummary?: string,
+  media?: { type: 'image' | 'video'; url?: string; dataUri?: string }[],
 ): void {
+  const outputs = (media ?? [])
+    .map((m) => ({ type: m.type, url: m.url || m.dataUri || '' }))
+    .filter((m) => m.url);
   updateLogEntry(id, {
     status: 'success',
     ...(httpStatus !== undefined ? { httpStatus } : {}),
     ...(responseSummary !== undefined ? { responseSummary } : {}),
+    ...(outputs.length ? { outputs, outputUrl: outputs[0]!.url } : {}),
   });
 }
 
@@ -86,6 +101,9 @@ export function markLogFailed(
 function updateLogEntry(id: string, updates: Partial<RequestLogEntry>): void {
   const entry = requestLog.find((e) => e.id === id);
   if (!entry) return;
+  // Count the terminal transition once (processing → success/failed).
+  if (entry.status === 'processing' && updates.status === 'success') bumpMetric('successCount');
+  else if (entry.status === 'processing' && updates.status === 'failed') bumpMetric('failedCount');
   Object.assign(entry, updates);
   broadcastLog();
 }

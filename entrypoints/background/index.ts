@@ -1,5 +1,5 @@
 /**
- * Flow Kit — Background Service Worker
+ * Flow Helper — Background Service Worker
  *
  *  • Captures the user's Google bearer token from outgoing Flow API calls.
  *  • Solves enterprise reCAPTCHA from the active Flow tab.
@@ -14,7 +14,13 @@ import { defineBackground } from 'wxt/utils/define-background';
 import { state, loadPersisted, setAppState } from './state';
 import { solveCaptcha, FLOW_TAB_URLS } from './captcha';
 import { handleTrpcMediaUrls, getProjectMedia, loadProjectMedia } from './trpc-media';
-import { fetchProjectMedia, projectIdFromUrl } from './project-media';
+import {
+  fetchProjectMedia,
+  enrichWithUrls,
+  fetchModelMap,
+  projectIdFromUrl,
+  workflowIdFromUrl,
+} from './project-media';
 import { startTelemetry } from './telemetry';
 import { getRequestLog } from './log';
 import { loadTemplates, getTemplates, recordTemplate, runGenerate } from './generate';
@@ -124,6 +130,51 @@ async function captureTokenFromFlowTab(): Promise<void> {
   }
 }
 
+/** Wait until a tab finishes loading (or timeout) before touching it. */
+function waitForTabComplete(tabId: number, timeout = 15000): Promise<void> {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    const check = async () => {
+      try {
+        const t = await chrome.tabs.get(tabId);
+        if (t.status === 'complete') return resolve();
+      } catch {
+        return resolve(); // tab gone — nothing to wait for
+      }
+      if (Date.now() - start > timeout) return resolve();
+      setTimeout(check, 300);
+    };
+    void check();
+  });
+}
+
+/** Hard session recovery for 403s: reload the Flow tab so Google issues a fresh
+ *  session, wait for it, then let its requests re-capture the bearer token. */
+async function reloadFlowTabAndSync(): Promise<void> {
+  const tabs = await chrome.tabs.query({ url: [...FLOW_TAB_URLS] });
+  if (!tabs.length) {
+    // No Flow tab open — fall back to opening one + capturing.
+    await captureTokenFromFlowTab();
+    return;
+  }
+  const tabId = tabs[0]!.id!;
+  try {
+    console.log('[FlowAgent] 403 recovery — reloading Flow tab', tabId);
+    await chrome.tabs.reload(tabId, { bypassCache: true });
+    await waitForTabComplete(tabId);
+    // Give the freshly loaded page a moment to fire its authenticated calls so
+    // the webRequest listener re-captures a fresh bearer token automatically.
+    await sleep(1500);
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ['content-scripts/flow-bridge.js'],
+    });
+    console.log('[FlowAgent] 403 recovery — Flow tab reloaded + token re-synced');
+  } catch (e) {
+    console.error('[FlowAgent] 403 recovery failed:', e);
+  }
+}
+
 // ─── Popup / side panel message router ───────────────────
 
 type UiReply = (response?: unknown) => void;
@@ -189,7 +240,8 @@ function handleUiMessage(msg: UiMessage, reply: UiReply): boolean {
     case 'GET_TEMPLATES': {
       const t = getTemplates();
       reply({
-        image: !!t.image,
+        image: true, // built-in default schema — no capture needed
+        imageBuiltIn: !t.image,
         video: !!t.video,
         videoPoll: !!t.videoPoll,
         imageAt: t.image?.capturedAt ?? null,
@@ -201,14 +253,34 @@ function handleUiMessage(msg: UiMessage, reply: UiReply): boolean {
     case 'GENERATE': {
       const params = msg.params as GenerateParams;
       const runId = `gen-${Date.now()}`;
-      runGenerate(runId, params, {
-        onProgress: (p: GenProgress) => {
-          chrome.runtime.sendMessage({ type: 'GEN_PROGRESS', progress: p }).catch(() => {});
-        },
-        refreshToken: () => captureTokenFromFlowTab(),
-      })
-        .then((result: GenResult) => reply(result))
-        .catch((e) => reply({ runId, ok: false, media: [], attempts: 0, error: (e as Error).message }));
+      // Bind the request to the project/workflow currently open in the Flow tab.
+      void (async () => {
+        const tabs = await chrome.tabs.query({ url: [...FLOW_TAB_URLS] });
+        for (const t of tabs) {
+          params.projectId = params.projectId || projectIdFromUrl(t.url) || undefined;
+          params.workflowId = params.workflowId || workflowIdFromUrl(t.url) || undefined;
+          if (params.projectId && params.workflowId) break;
+        }
+        // Translate the model-family id (nano_banana_pro) → real imageModelName.
+        if (params.model && params.projectId) {
+          const mmap = await fetchModelMap(params.projectId);
+          if (mmap[params.model]) {
+            console.log(`[FlowGen] model ${params.model} → ${mmap[params.model]}`);
+            params.model = mmap[params.model];
+          } else {
+            console.warn(`[FlowGen] no imageModelName mapping for "${params.model}" — sending as-is`);
+          }
+        }
+        runGenerate(runId, params, {
+          onProgress: (p: GenProgress) => {
+            chrome.runtime.sendMessage({ type: 'GEN_PROGRESS', progress: p }).catch(() => {});
+          },
+          refreshToken: () => captureTokenFromFlowTab(),
+          reloadFlowTab: () => reloadFlowTabAndSync(),
+        })
+          .then((result: GenResult) => reply(result))
+          .catch((e) => reply({ runId, ok: false, media: [], attempts: 0, error: (e as Error).message }));
+      })();
       return true;
     }
 
@@ -223,11 +295,13 @@ async function resolveProjectMedia(
 ): Promise<void> {
   try {
     let pid = projectId || null;
+    let wfid: string | null = null;
     if (!pid) {
       const tabs = await chrome.tabs.query({ url: [...FLOW_TAB_URLS] });
       for (const t of tabs) {
-        pid = projectIdFromUrl(t.url);
-        if (pid) break;
+        pid = pid || projectIdFromUrl(t.url);
+        wfid = wfid || workflowIdFromUrl(t.url);
+        if (pid && wfid) break;
       }
     }
     if (!pid) {
@@ -235,9 +309,20 @@ async function resolveProjectMedia(
       return;
     }
 
-    const items = await fetchProjectMedia(pid);
+    const all = await fetchProjectMedia(pid);
 
-    // Enrich missing thumbnails from passively-captured serving URLs.
+    // Scope references to the current workflow (so they're valid in the request).
+    // Fall back to the whole project if the workflow has none yet.
+    let items = wfid ? all.filter((it) => it.workflowId === wfid) : all;
+    let scoped = true;
+    if (!items.length) {
+      items = all;
+      scoped = false;
+    }
+
+    await enrichWithUrls(items);
+
+    // Backfill any still-missing URL from passively-captured serving URLs.
     const passive = getProjectMedia();
     for (const it of items) {
       if (!it.url) {
@@ -245,7 +330,7 @@ async function resolveProjectMedia(
         if (hit) it.url = hit.url;
       }
     }
-    reply({ media: items, projectId: pid });
+    reply({ media: items, projectId: pid, workflowId: wfid, scoped });
   } catch (e) {
     reply({ error: (e as Error).message, media: [] });
   }

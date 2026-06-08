@@ -33,7 +33,7 @@ function shouldScan(url: string): boolean {
  *  signed GCS media URLs. */
 function scanForMedia(url: string, text: string, via: string): void {
   if (STORAGE_MEDIA_RE.test(text)) {
-    console.log(`[FlowKit] media URLs found via ${via}:`, url);
+    console.log(`[FlowHelper] media URLs found via ${via}:`, url);
     window.dispatchEvent(new CustomEvent('TRPC_MEDIA_URLS', { detail: { url, body: text } }));
   }
 }
@@ -111,7 +111,7 @@ export default defineUnlistedScript(() => {
       // ── capture real generation requests as replay templates ──
       if (GEN_ENDPOINT_RE.test(url)) {
         const rawBody = readRequestBody(args);
-        console.log('[FlowKit] gen request seen:', url, rawBody ? '(body ok)' : '(NO BODY — cannot capture)');
+        console.log('[FlowHelper] gen request seen:', url, rawBody ? '(body ok)' : '(NO BODY — cannot capture)');
         if (rawBody) {
           let parsed: unknown = rawBody;
           try {
