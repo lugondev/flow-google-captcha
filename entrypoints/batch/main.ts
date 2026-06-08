@@ -41,6 +41,7 @@ interface ProjectMedia { mediaId: string; type: 'image' | 'video'; prompt?: stri
 
 const STORE_KEY = 'batchState';
 let rows: Row[] = [];
+let globalRefs: BatchRef[] = []; // style refs auto-merged into every row at run time
 let running = false;
 let seq = 0;
 
@@ -78,13 +79,17 @@ function saveBatch(): void {
     // keep project refs (small url/id) but drop uploaded base64 to avoid quota blowups
     refs: r.refs.filter((x) => x.source === 'project').map((x) => ({ source: x.source, url: x.url, mediaId: x.mediaId, thumb: x.thumb, name: x.name })),
   }));
-  void chrome.storage.local.set({ [STORE_KEY]: { rows: slim, settings } });
+  const slimGlobal = globalRefs
+    .filter((x) => x.source === 'project')
+    .map((x) => ({ source: x.source, url: x.url, mediaId: x.mediaId, thumb: x.thumb, name: x.name }));
+  void chrome.storage.local.set({ [STORE_KEY]: { rows: slim, settings, globalRefs: slimGlobal } });
 }
 async function loadBatch(): Promise<void> {
   const data = await chrome.storage.local.get(STORE_KEY);
   const saved = data[STORE_KEY];
   if (!saved) return;
   if (saved.settings) Object.assign(settings, saved.settings);
+  if (Array.isArray(saved.globalRefs)) globalRefs = saved.globalRefs as BatchRef[];
   if (Array.isArray(saved.rows)) {
     rows = saved.rows.map((r: Partial<Row>) => ({
       id: r.id || uid(), prompt: r.prompt || '', refs: (r.refs as BatchRef[]) || [],
@@ -188,7 +193,7 @@ function runRow(row: Row, noReload: boolean): Promise<void> {
       orientation: settings.orientation,
       count: settings.count,
       maxAttempts: settings.maxAttempts,
-      references: row.refs.map((r) => ({ source: r.source, name: r.name, mime: r.mime, base64: r.base64, url: r.url, mediaId: r.mediaId })),
+      references: mergeRefs(row).map((r) => ({ source: r.source, name: r.name, mime: r.mime, base64: r.base64, url: r.url, mediaId: r.mediaId })),
       clientId: row.id,
       noReload,
     };
@@ -289,34 +294,79 @@ chrome.runtime.onMessage.addListener((msg) => {
   if (msg?.type === 'STATUS_PUSH') { fetchStatus(); fetchProjectInfo(); }
 });
 
-// ─── reference picker modal ──
-let activeRefRow: Row | null = null;
+// ─── reference picker modal (target = a row, or the global style set) ──
+type RefTarget = Row | 'global';
+let refTarget: RefTarget | null = null;
 
-function openRefModal(row: Row): void {
-  activeRefRow = row;
-  $('ref-modal-title')!.textContent = `Ảnh tham chiếu — dòng ${rows.indexOf(row) + 1}`;
-  $('ref-modal-hint')!.textContent = `${row.refs.length}/${MAX_REFS} ảnh.`;
+function targetRefs(): BatchRef[] | null {
+  if (refTarget === 'global') return globalRefs;
+  return refTarget ? refTarget.refs : null;
+}
+
+function openRefModal(target: RefTarget): void {
+  refTarget = target;
+  $('ref-modal-title')!.textContent = target === 'global'
+    ? 'Ảnh style chung (áp cho mọi dòng)'
+    : `Ảnh tham chiếu — dòng ${rows.indexOf(target) + 1}`;
   $('ref-pg')!.innerHTML = '';
   renderModalRefs();
   $('ref-modal')!.classList.add('open');
 }
-function closeRefModal(): void { $('ref-modal')!.classList.remove('open'); activeRefRow = null; }
+function closeRefModal(): void { $('ref-modal')!.classList.remove('open'); refTarget = null; }
 
 function renderModalRefs(): void {
-  if (!activeRefRow) return;
-  const row = activeRefRow;
-  $('ref-modal-hint')!.textContent = `${row.refs.length}/${MAX_REFS} ảnh.`;
-  $('ref-current')!.innerHTML = row.refs.map((r, i) => {
+  const refs = targetRefs();
+  if (!refs) return;
+  $('ref-modal-hint')!.textContent = `${refs.length}/${MAX_REFS} ảnh.`;
+  $('ref-current')!.innerHTML = refs.map((r, i) => {
     const src = r.thumb || r.url || '';
     const img = src ? `<img src="${escHtml(src)}" />` : `<span style="font-size:7px;color:var(--muted)">${escHtml((r.name || r.mediaId || '').slice(0, 12))}</span>`;
     return `<div class="ref-thumb">${img}<span class="rx" data-mact="del" data-i="${i}">&times;</span></div>`;
   }).join('');
-  // sync project grid selection
   document.querySelectorAll<HTMLElement>('#ref-pg .pm').forEach((el) => {
     const id = el.getAttribute('data-media-id');
-    el.classList.toggle('sel', row.refs.some((r) => r.source === 'project' && r.mediaId === id));
+    el.classList.toggle('sel', refs.some((r) => r.source === 'project' && r.mediaId === id));
   });
-  updateRow(row);
+  // reflect into the target's view
+  if (refTarget === 'global') renderGlobalRefs();
+  else if (refTarget) updateRow(refTarget);
+}
+
+function renderGlobalRefs(): void {
+  const strip = $('global-refs')!;
+  strip.innerHTML = globalRefs.map((r, i) => {
+    const src = r.thumb || r.url || '';
+    const img = src
+      ? `<img src="${escHtml(src)}" loading="lazy" />`
+      : `<span style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;font-size:7px;color:var(--muted);text-align:center">${escHtml((r.name || r.mediaId || '').slice(0, 14))}</span>`;
+    return `<div class="ref-thumb">${img}<span class="rx" data-gdel="${i}">&times;</span></div>`;
+  }).join('') + '<span class="ref-add" id="global-add" title="Thêm ảnh style chung">+</span>';
+  $('global-hint')!.textContent = globalRefs.length
+    ? `${globalRefs.length} ảnh · tự ghép vào mọi dòng khi chạy`
+    : 'Chưa có — bấm + để thêm';
+  $('global-add')!.addEventListener('click', () => openRefModal('global'));
+  strip.querySelectorAll<HTMLElement>('[data-gdel]').forEach((x) =>
+    x.addEventListener('click', () => {
+      globalRefs.splice(Number(x.getAttribute('data-gdel')), 1);
+      saveBatch(); renderGlobalRefs();
+      if (refTarget === 'global') renderModalRefs();
+    }),
+  );
+}
+
+/** global style refs first, then the row's own refs; dedup, cap at MAX_REFS. */
+function mergeRefs(row: Row): BatchRef[] {
+  const out: BatchRef[] = [];
+  const seen = new Set<string>();
+  const key = (r: BatchRef) => `${r.source}:${r.mediaId || r.url || r.name || (r.base64 || '').slice(0, 24)}`;
+  for (const r of [...globalRefs, ...row.refs]) {
+    const k = key(r);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(r);
+    if (out.length >= MAX_REFS) break;
+  }
+  return out;
 }
 
 function loadProjectGrid(): void {
@@ -341,23 +391,23 @@ function loadProjectGrid(): void {
 }
 
 function toggleProjectRef(m: ProjectMedia): void {
-  if (!activeRefRow) return;
-  const row = activeRefRow;
-  const idx = row.refs.findIndex((r) => r.source === 'project' && r.mediaId === m.mediaId);
-  if (idx >= 0) row.refs.splice(idx, 1);
-  else if (row.refs.length >= MAX_REFS) { $('ref-modal-hint')!.textContent = `Tối đa ${MAX_REFS} ảnh.`; return; }
-  else row.refs.push({ source: 'project', url: m.url, mediaId: m.mediaId, thumb: m.url, name: m.prompt || m.mediaId });
+  const refs = targetRefs();
+  if (!refs) return;
+  const idx = refs.findIndex((r) => r.source === 'project' && r.mediaId === m.mediaId);
+  if (idx >= 0) refs.splice(idx, 1);
+  else if (refs.length >= MAX_REFS) { $('ref-modal-hint')!.textContent = `Tối đa ${MAX_REFS} ảnh.`; return; }
+  else refs.push({ source: 'project', url: m.url, mediaId: m.mediaId, thumb: m.url, name: m.prompt || m.mediaId });
   saveBatch(); renderModalRefs();
 }
 
 async function addUploadsToActive(files: FileList): Promise<void> {
-  if (!activeRefRow) return;
-  const row = activeRefRow;
+  const refs = targetRefs();
+  if (!refs) return;
   for (const file of Array.from(files)) {
     if (!file.type.startsWith('image/')) continue;
-    if (row.refs.length >= MAX_REFS) { $('ref-modal-hint')!.textContent = `Tối đa ${MAX_REFS} ảnh.`; break; }
+    if (refs.length >= MAX_REFS) { $('ref-modal-hint')!.textContent = `Tối đa ${MAX_REFS} ảnh.`; break; }
     const { base64, dataUri } = await fileToBase64(file);
-    row.refs.push({ source: 'upload', name: file.name, mime: file.type, base64, thumb: dataUri });
+    refs.push({ source: 'upload', name: file.name, mime: file.type, base64, thumb: dataUri });
   }
   saveBatch(); renderModalRefs();
 }
@@ -461,8 +511,9 @@ function initRefModal(): void {
   $('ref-load-project')!.addEventListener('click', loadProjectGrid);
   $('ref-current')!.addEventListener('click', (e) => {
     const x = (e.target as HTMLElement).closest('[data-mact="del"]') as HTMLElement | null;
-    if (!x || !activeRefRow) return;
-    activeRefRow.refs.splice(Number(x.getAttribute('data-i')), 1);
+    const refs = targetRefs();
+    if (!x || !refs) return;
+    refs.splice(Number(x.getAttribute('data-i')), 1);
     saveBatch(); renderModalRefs();
   });
 }
@@ -475,6 +526,7 @@ async function main(): Promise<void> {
   initTableDelegation();
   initRefModal();
   render();
+  renderGlobalRefs();
   fetchStatus();
   fetchProjectInfo();
   setInterval(() => { fetchStatus(); fetchProjectInfo(); }, 15000);

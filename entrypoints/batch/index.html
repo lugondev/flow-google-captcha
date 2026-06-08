@@ -101,6 +101,12 @@
       .pb-btn { padding: 5px 10px; font-size: 11px; font-weight: 600; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--card); color: var(--text); cursor: pointer; }
       .pb-btn:hover { border-color: var(--accent); color: var(--accent); }
 
+      /* Global style reference (applied to every row at run time) */
+      .global-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 8px 20px; border-bottom: 1px solid var(--border); background: var(--surface); flex-shrink: 0; }
+      .gb-label { font-size: 12px; font-weight: 600; color: var(--text); white-space: nowrap; }
+      .gb-label .muted { color: var(--muted); font-weight: 400; }
+      #global-hint { font-size: 11px; color: var(--muted); }
+
       /* Collapsible shared settings */
       .settings-bar { padding: 10px 20px; border-bottom: 1px solid var(--border); background: var(--surface); flex-shrink: 0; }
       .settings-card { border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); overflow: hidden; }
@@ -166,6 +172,12 @@
       <div class="tb-field"><span class="tb-label">&nbsp;</span><button class="btn" id="btn-add-row">+ Dòng trống</button></div>
       <div class="tb-field"><span class="tb-label">&nbsp;</span><button class="btn btn-primary" id="btn-run-all">▶ Chạy tất cả</button></div>
       <div class="tb-field"><span class="tb-label">&nbsp;</span><button class="btn btn-danger" id="btn-del-selected">Xóa đã chọn</button></div>
+    </div>
+
+    <div class="global-bar">
+      <span class="gb-label">🎨 Ảnh style chung <span class="muted">(tự áp cho mọi dòng)</span></span>
+      <div class="refs" id="global-refs"></div>
+      <span id="global-hint"></span>
     </div>
 
     <div class="settings-bar">
