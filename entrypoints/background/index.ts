@@ -81,6 +81,20 @@ export default defineBackground({
       return true;
     });
 
+    // ── Right-click on the toolbar icon → open the batch (multi-prompt) page ──
+    chrome.contextMenus.onClicked.addListener((info) => {
+      if (info.menuItemId === 'open-batch') {
+        void chrome.tabs.create({ url: chrome.runtime.getURL('batch.html') });
+      }
+    });
+    chrome.contextMenus.removeAll(() => {
+      chrome.contextMenus.create({
+        id: 'open-batch',
+        title: '⊞ Mở bảng nhiều prompt',
+        contexts: ['action'],
+      });
+    });
+
     startTelemetry();
     console.log('[FlowAgent] Extension loaded');
   },
@@ -183,19 +197,23 @@ type UiMessage = { type: string; [k: string]: unknown };
 function handleUiMessage(msg: UiMessage, reply: UiReply): boolean {
   switch (msg.type) {
     case 'STATUS': {
-      reply({
-        flowKeyPresent: !!state.flowKey,
-        tokenAge: state.metrics.tokenCapturedAt
-          ? Date.now() - state.metrics.tokenCapturedAt
-          : null,
-        metrics: {
-          requestCount: state.metrics.requestCount,
-          successCount: state.metrics.successCount,
-          failedCount: state.metrics.failedCount,
-          lastError: state.metrics.lastError,
-        },
-        state: state.appState,
-      });
+      void (async () => {
+        const tabs = await chrome.tabs.query({ url: [...FLOW_TAB_URLS] });
+        reply({
+          flowKeyPresent: !!state.flowKey,
+          hasFlowTab: tabs.length > 0,
+          tokenAge: state.metrics.tokenCapturedAt
+            ? Date.now() - state.metrics.tokenCapturedAt
+            : null,
+          metrics: {
+            requestCount: state.metrics.requestCount,
+            successCount: state.metrics.successCount,
+            failedCount: state.metrics.failedCount,
+            lastError: state.metrics.lastError,
+          },
+          state: state.appState,
+        });
+      })();
       return true;
     }
 
@@ -205,6 +223,28 @@ function handleUiMessage(msg: UiMessage, reply: UiReply): boolean {
 
     case 'OPEN_FLOW_TAB':
       void openFlowTab(reply);
+      return true;
+
+    case 'GET_PROJECT_INFO':
+      void (async () => {
+        const tabs = await chrome.tabs.query({ url: [...FLOW_TAB_URLS] });
+        const tab = tabs[0];
+        if (!tab) {
+          reply({ hasTab: false });
+          return;
+        }
+        const name = (tab.title || '')
+          .replace(/\s*[-–|]\s*(Google Labs|Google AI|Flow|VideoFX).*$/i, '')
+          .trim();
+        reply({
+          hasTab: true,
+          tabId: tab.id ?? null,
+          url: tab.url ?? null,
+          name: name || null,
+          projectId: projectIdFromUrl(tab.url) || null,
+          workflowId: workflowIdFromUrl(tab.url) || null,
+        });
+      })();
       return true;
 
     case 'REFRESH_TOKEN':

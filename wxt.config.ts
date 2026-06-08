@@ -19,6 +19,7 @@ export default defineConfig({
       'scripting',
       'declarativeNetRequest',
       'sidePanel',
+      'contextMenus',
     ],
     host_permissions: [
       'https://labs.google/*',

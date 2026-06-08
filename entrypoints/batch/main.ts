@@ -102,6 +102,7 @@ function readSettings(): void {
   settings.count = Math.max(1, Number(($('s-count') as HTMLInputElement).value) || 1);
   settings.maxAttempts = Math.max(1, Number(($('s-attempts') as HTMLInputElement).value) || 3);
   settings.concurrency = Math.min(5, Math.max(1, Number(($('s-concurrency') as HTMLInputElement).value) || 3));
+  updateSettingsSummary();
   saveBatch();
 }
 function applySettingsToInputs(): void {
@@ -226,8 +227,57 @@ async function runMany(targets: Row[], noReload: boolean): Promise<void> {
 }
 
 function setRunUI(on: boolean): void {
-  ($('btn-run-all') as HTMLButtonElement).disabled = on;
   ($('btn-run-all') as HTMLButtonElement).textContent = on ? '⏳ Đang chạy…' : '▶ Chạy tất cả';
+  reflectReady();
+}
+
+// ─── flow readiness, token status, project info ──
+let flowReady = false;
+
+function blockReason(): string { return 'Cần mở tab Flow (đang đăng nhập, có token) trước khi tạo.'; }
+
+function reflectReady(): void {
+  ($('btn-run-all') as HTMLButtonElement).disabled = running || !flowReady;
+}
+
+function fetchStatus(): void {
+  chrome.runtime.sendMessage({ type: 'STATUS' }, (data) => {
+    if (chrome.runtime.lastError || !data) return;
+    const el = $('token-status')!;
+    if (!data.hasFlowTab) { el.textContent = 'chưa mở tab Flow'; el.className = 'bad'; }
+    else if (data.flowKeyPresent) {
+      const ageMin = Math.round((data.tokenAge || 0) / 60000);
+      if ((data.tokenAge || 0) > 3_600_000) { el.textContent = `token cũ ${ageMin}m — mở Flow để refresh`; el.className = 'warn'; }
+      else { el.textContent = `token synced ${ageMin}m`; el.className = 'ok'; }
+    } else { el.textContent = 'no token'; el.className = 'bad'; }
+    flowReady = !!(data.flowKeyPresent && data.hasFlowTab);
+    reflectReady();
+  });
+}
+
+function fetchProjectInfo(): void {
+  chrome.runtime.sendMessage({ type: 'GET_PROJECT_INFO' }, (info) => {
+    if (chrome.runtime.lastError || !info) return;
+    const nameEl = $('pi-name')!, idEl = $('pi-id')!, wfEl = $('pi-wf')!;
+    if (!info.hasTab) {
+      nameEl.textContent = 'Chưa mở tab Flow';
+      idEl.textContent = '—'; wfEl.textContent = '—';
+      nameEl.closest('.pb-item')?.classList.add('warn');
+      return;
+    }
+    nameEl.closest('.pb-item')?.classList.remove('warn');
+    nameEl.textContent = info.name || '(không tên)';
+    idEl.textContent = info.projectId || '—';
+    wfEl.textContent = info.workflowId || '—';
+  });
+}
+
+function updateSettingsSummary(): void {
+  const modelLabel = ($('s-model') as HTMLSelectElement).selectedOptions[0]?.textContent || settings.model;
+  const kindLabel = settings.mediaType === 'image' ? 'Image' : 'Video';
+  const orient = settings.orientation.charAt(0).toUpperCase() + settings.orientation.slice(1);
+  $('settings-summary')!.innerHTML =
+    `<span class="muted">Cài đặt chung:</span> ${escHtml(kindLabel)} · ${escHtml(modelLabel)} · ${orient} · ${settings.count} ảnh · ${settings.maxAttempts} thử · ${settings.concurrency} đồng thời`;
 }
 
 // Route per-row progress (matched by clientId) to its row.
@@ -236,6 +286,7 @@ chrome.runtime.onMessage.addListener((msg) => {
     const row = rows.find((r) => r.id === msg.progress.clientId);
     if (row && row.status === 'running') { row.msg = msg.progress.message; updateRow(row); }
   }
+  if (msg?.type === 'STATUS_PUSH') { fetchStatus(); fetchProjectInfo(); }
 });
 
 // ─── reference picker modal ──
@@ -342,6 +393,7 @@ function initToolbar(): void {
   $('btn-add-row')!.addEventListener('click', addEmptyRow);
   $('btn-del-selected')!.addEventListener('click', deleteSelected);
   $('btn-run-all')!.addEventListener('click', () => {
+    if (!flowReady) { fetchStatus(); return; }
     readSettings();
     const targets = rows.filter((r) => r.status !== 'done' && r.prompt.trim());
     void runMany(targets, true); // parallel batch → suppress per-row tab reload
@@ -349,6 +401,20 @@ function initToolbar(): void {
   ['s-kind', 's-model', 's-orient', 's-count', 's-attempts', 's-concurrency'].forEach((id) =>
     $(id)!.addEventListener('change', readSettings),
   );
+  $('settings-toggle')!.addEventListener('click', () => $('settings-card')!.classList.toggle('open'));
+
+  // Footer + project-bar actions
+  $('btn-flow')!.addEventListener('click', () => chrome.runtime.sendMessage({ type: 'OPEN_FLOW_TAB' }));
+  $('pi-open')!.addEventListener('click', () => chrome.runtime.sendMessage({ type: 'OPEN_FLOW_TAB' }));
+  $('pi-refresh')!.addEventListener('click', () => { fetchProjectInfo(); fetchStatus(); });
+  $('btn-token')!.addEventListener('click', () => {
+    const btn = $('btn-token') as HTMLButtonElement;
+    btn.disabled = true; btn.textContent = 'Đang sync…';
+    chrome.runtime.sendMessage({ type: 'REFRESH_TOKEN' }, () => {
+      btn.disabled = false; btn.textContent = 'Refresh Token';
+      fetchStatus(); fetchProjectInfo();
+    });
+  });
   $('chk-all')!.addEventListener('change', (e) => {
     const on = (e.target as HTMLInputElement).checked;
     document.querySelectorAll<HTMLInputElement>('#rows input[data-act="sel"]').forEach((c) => (c.checked = on));
@@ -364,8 +430,11 @@ function initTableDelegation(): void {
     const row = tr && rows.find((r) => r.id === tr.getAttribute('data-row'));
     if (!row) return;
     const act = el.getAttribute('data-act');
-    if (act === 'run') { readSettings(); void runMany([row], !running ? false : true); }
-    else if (act === 'rerun') { readSettings(); void runMany([row], !running ? false : true); }
+    if (act === 'run' || act === 'rerun') {
+      if (!flowReady) { row.msg = blockReason(); updateRow(row); fetchStatus(); return; }
+      readSettings();
+      void runMany([row], running);
+    }
     else if (act === 'open') { const m = row.media[0]; if (m?.url) window.open(m.url, '_blank'); }
     else if (act === 'del') { rows = rows.filter((r) => r !== row); saveBatch(); render(); }
     else if (act === 'ref-edit') openRefModal(row);
@@ -401,9 +470,13 @@ function initRefModal(): void {
 async function main(): Promise<void> {
   await loadBatch();
   applySettingsToInputs();
+  updateSettingsSummary();
   initToolbar();
   initTableDelegation();
   initRefModal();
   render();
+  fetchStatus();
+  fetchProjectInfo();
+  setInterval(() => { fetchStatus(); fetchProjectInfo(); }, 15000);
 }
 void main();

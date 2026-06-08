@@ -91,6 +91,41 @@
 
       .empty { padding: 40px; text-align: center; color: var(--muted); }
 
+      /* Project info bar */
+      .project-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; padding: 8px 20px; background: var(--bg); border-bottom: 1px solid var(--border); font-size: 12px; flex-shrink: 0; }
+      .pb-item { color: var(--muted); display: flex; align-items: center; gap: 5px; }
+      .pb-item b { color: var(--text); font-weight: 600; }
+      .pb-item code { font-family: var(--mono); font-size: 11px; color: var(--accent); background: var(--card); padding: 1px 6px; border-radius: 4px; }
+      .pb-item.warn { color: var(--yellow); }
+      .pb-spacer { margin-left: auto; }
+      .pb-btn { padding: 5px 10px; font-size: 11px; font-weight: 600; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--card); color: var(--text); cursor: pointer; }
+      .pb-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+      /* Collapsible shared settings */
+      .settings-bar { padding: 10px 20px; border-bottom: 1px solid var(--border); background: var(--surface); flex-shrink: 0; }
+      .settings-card { border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); overflow: hidden; }
+      .settings-head { display: flex; align-items: center; gap: 8px; padding: 9px 12px; cursor: pointer; user-select: none; font-size: 12px; }
+      .settings-head:hover { background: var(--card-hover); }
+      .settings-summary { color: var(--text); }
+      .settings-summary .muted { color: var(--muted); }
+      .settings-caret { font-size: 10px; color: var(--muted); transition: transform .2s; }
+      .settings-card.open .settings-caret { transform: rotate(90deg); }
+      .settings-body { display: none; flex-wrap: wrap; gap: 14px; padding: 4px 12px 12px; border-top: 1px solid var(--border); align-items: flex-end; }
+      .settings-card.open .settings-body { display: flex; }
+
+      /* Fixed footer (token + actions + credit) */
+      .footer { flex-shrink: 0; border-top: 1px solid var(--border); background: var(--surface); }
+      .state-bar { display: flex; align-items: center; gap: 8px; padding: 6px 20px; border-bottom: 1px solid var(--border); font-size: 10px; color: var(--muted); font-weight: 600; letter-spacing: 0.04em; }
+      #token-status { margin-left: auto; font-weight: 500; }
+      #token-status.ok { color: var(--green); }
+      #token-status.bad { color: var(--red); }
+      #token-status.warn { color: var(--yellow); }
+      .f-actions { display: flex; gap: 8px; padding: 8px 20px; }
+      .f-actions .btn { flex: 0 0 auto; }
+      .signature { padding: 5px 20px; text-align: center; font-size: 9px; color: var(--muted); background: var(--bg); border-top: 1px solid var(--border); }
+      .signature a { color: var(--accent); text-decoration: none; }
+      .signature a:hover { color: var(--text); }
+
       /* Ref picker modal */
       .modal { display: none; position: fixed; inset: 0; background: rgba(5,5,15,.7); backdrop-filter: blur(2px); z-index: 100; align-items: center; justify-content: center; }
       .modal.open { display: flex; }
@@ -113,6 +148,15 @@
       <div id="count-pill">0 dòng</div>
     </header>
 
+    <div class="project-bar">
+      <span class="pb-item">Project: <b id="pi-name">—</b></span>
+      <span class="pb-item">id: <code id="pi-id">—</code></span>
+      <span class="pb-item">workflow: <code id="pi-wf">—</code></span>
+      <span class="pb-spacer"></span>
+      <button class="pb-btn" id="pi-refresh" title="Làm mới thông tin project">↻ Làm mới</button>
+      <button class="pb-btn" id="pi-open">↗ Mở tab Flow</button>
+    </div>
+
     <div class="toolbar">
       <div class="tb-field tb-grow">
         <span class="tb-label">Dán nhiều prompt (mỗi dòng = 1 dòng tạo)</span>
@@ -120,25 +164,34 @@
       </div>
       <div class="tb-field"><span class="tb-label">&nbsp;</span><button class="btn" id="btn-add-paste">+ Thêm từ ô trên</button></div>
       <div class="tb-field"><span class="tb-label">&nbsp;</span><button class="btn" id="btn-add-row">+ Dòng trống</button></div>
-
-      <div class="tb-field">
-        <span class="tb-label">Loại</span>
-        <select id="s-kind"><option value="image">Image</option><option value="video">Video</option></select>
-      </div>
-      <div class="tb-field">
-        <span class="tb-label">Model</span>
-        <select id="s-model"><option value="nano_banana_pro">🍌 Nano Banana Pro</option><option value="narwhal_display">🍌 Nano Banana 2</option></select>
-      </div>
-      <div class="tb-field">
-        <span class="tb-label">Orientation</span>
-        <select id="s-orient"><option value="landscape">Landscape</option><option value="portrait" selected>Portrait</option><option value="square">Square</option></select>
-      </div>
-      <div class="tb-field"><span class="tb-label">Số lượng</span><input id="s-count" type="number" min="1" max="8" value="1" /></div>
-      <div class="tb-field"><span class="tb-label">Max attempts</span><input id="s-attempts" type="number" min="1" max="10" value="3" /></div>
-      <div class="tb-field"><span class="tb-label">Đồng thời</span><input id="s-concurrency" type="number" min="1" max="5" value="3" /></div>
-
       <div class="tb-field"><span class="tb-label">&nbsp;</span><button class="btn btn-primary" id="btn-run-all">▶ Chạy tất cả</button></div>
       <div class="tb-field"><span class="tb-label">&nbsp;</span><button class="btn btn-danger" id="btn-del-selected">Xóa đã chọn</button></div>
+    </div>
+
+    <div class="settings-bar">
+      <div class="settings-card" id="settings-card">
+        <div class="settings-head" id="settings-toggle">
+          <span class="settings-caret">▶</span>
+          <span class="settings-summary" id="settings-summary">Cài đặt chung</span>
+        </div>
+        <div class="settings-body">
+          <div class="tb-field">
+            <span class="tb-label">Loại</span>
+            <select id="s-kind"><option value="image">Image</option><option value="video">Video</option></select>
+          </div>
+          <div class="tb-field">
+            <span class="tb-label">Model</span>
+            <select id="s-model"><option value="nano_banana_pro">🍌 Nano Banana Pro</option><option value="narwhal_display">🍌 Nano Banana 2</option></select>
+          </div>
+          <div class="tb-field">
+            <span class="tb-label">Orientation</span>
+            <select id="s-orient"><option value="landscape">Landscape</option><option value="portrait" selected>Portrait</option><option value="square">Square</option></select>
+          </div>
+          <div class="tb-field"><span class="tb-label">Số lượng</span><input id="s-count" type="number" min="1" max="8" value="1" /></div>
+          <div class="tb-field"><span class="tb-label">Max attempts</span><input id="s-attempts" type="number" min="1" max="10" value="3" /></div>
+          <div class="tb-field"><span class="tb-label">Đồng thời</span><input id="s-concurrency" type="number" min="1" max="5" value="3" /></div>
+        </div>
+      </div>
     </div>
 
     <div class="table-wrap">
@@ -158,6 +211,19 @@
       </table>
       <div class="empty" id="empty">Chưa có dòng nào. Dán prompt ở trên rồi bấm "+ Thêm từ ô trên".</div>
     </div>
+
+    <footer class="footer">
+      <div class="state-bar">TOKEN <span id="token-status" class="bad">no token</span></div>
+      <div class="f-actions">
+        <button class="btn btn-primary" id="btn-flow">Open Flow Tab</button>
+        <button class="btn" id="btn-token">Refresh Token</button>
+      </div>
+      <div class="signature">
+        <a href="https://github.com/lugondev/flow-google-captcha" target="_blank" rel="noopener">
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-2px;margin-right:3px"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>Flow Helper · lugondev/flow-google-captcha
+        </a>
+      </div>
+    </footer>
 
     <input type="file" id="ref-file" accept="image/*" multiple hidden />
     <div class="modal" id="ref-modal">

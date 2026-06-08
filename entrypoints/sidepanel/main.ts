@@ -33,6 +33,7 @@ interface LogEntry {
 interface StatusData {
   state?: 'off' | 'idle' | 'running';
   flowKeyPresent?: boolean;
+  hasFlowTab?: boolean;
   tokenAge?: number | null;
   metrics?: {
     requestCount?: number;
@@ -66,6 +67,10 @@ function updateStatus(data: StatusData | null | undefined): void {
     }
   }
 
+  // Gate generation: need a Flow tab open (for captcha) AND a captured token.
+  flowReady = !!(data.flowKeyPresent && data.hasFlowTab);
+  reflectFlowReady(data);
+
   const m = data.metrics || {};
   const set = (id: string, v: number) => {
     const el = document.getElementById(id);
@@ -74,6 +79,21 @@ function updateStatus(data: StatusData | null | undefined): void {
   set('m-total', m.requestCount || 0);
   set('m-success', m.successCount || 0);
   set('m-failed', m.failedCount || 0);
+}
+
+let flowReady = false;
+let generating = false;
+
+function flowBlockReason(data?: StatusData): string {
+  if (data && !data.hasFlowTab) return 'Chưa mở tab Flow — bấm "Open Flow Tab".';
+  if (data && !data.flowKeyPresent) return 'Chưa có token — mở Flow & đăng nhập.';
+  return 'Cần mở tab Flow và có token hợp lệ.';
+}
+
+function reflectFlowReady(data?: StatusData): void {
+  const btn = document.getElementById('btn-generate') as HTMLButtonElement | null;
+  if (btn && !generating) btn.disabled = !flowReady;
+  if (btn) btn.title = flowReady ? '' : flowBlockReason(data);
 }
 
 let _logEntries: LogEntry[] = [];
@@ -522,6 +542,10 @@ function initGeneratePanel(): void {
 
   document.getElementById('btn-generate')?.addEventListener('click', () => {
     const btn = document.getElementById('btn-generate') as HTMLButtonElement | null;
+    if (!flowReady) {
+      setGenStatus(flowBlockReason(), 'err');
+      return;
+    }
     const prompt = promptEl?.value.trim() || '';
     if (!prompt) {
       setGenStatus('Nhập prompt trước đã.', 'err');
@@ -550,11 +574,13 @@ function initGeneratePanel(): void {
     });
 
     activeRunId = `pending-${Date.now()}`;
+    generating = true;
     if (btn) btn.disabled = true;
     setGenStatus('Bắt đầu…');
 
     chrome.runtime.sendMessage({ type: 'GENERATE', params }, (result?: GenResult) => {
-      if (btn) btn.disabled = false;
+      generating = false;
+      if (btn) btn.disabled = !flowReady;
       if (chrome.runtime.lastError) {
         setGenStatus(chrome.runtime.lastError.message || 'Lỗi gửi message', 'err');
         return;
