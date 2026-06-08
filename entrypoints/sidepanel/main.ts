@@ -84,6 +84,7 @@ function updateStatus(data: StatusData | null | undefined): void {
 
 let flowReady = false;
 let generating = false;
+let stopRequested = false;
 
 function flowBlockReason(data?: StatusData): string {
   if (data && !data.hasFlowTab) return 'Chưa mở tab Flow — bấm "Open Flow Tab".';
@@ -93,8 +94,49 @@ function flowBlockReason(data?: StatusData): string {
 
 function reflectFlowReady(data?: StatusData): void {
   const btn = document.getElementById('btn-generate') as HTMLButtonElement | null;
-  if (btn && !generating) btn.disabled = !flowReady;
-  if (btn) btn.title = flowReady ? '' : flowBlockReason(data);
+  if (btn && !generating) {
+    btn.disabled = !flowReady;
+    btn.title = flowReady ? '' : flowBlockReason(data);
+  }
+}
+
+function setGenBtn(mode: 'generate' | 'stop' | 'disabled'): void {
+  const btn = document.getElementById('btn-generate') as HTMLButtonElement | null;
+  if (!btn) return;
+  if (mode === 'stop') {
+    btn.textContent = '⬛ Dừng';
+    btn.classList.add('stopping');
+    btn.disabled = false;
+  } else {
+    btn.textContent = '✨ Generate';
+    btn.classList.remove('stopping');
+    btn.disabled = mode === 'disabled' || !flowReady;
+  }
+}
+
+function clearData(): void {
+  if (!confirm('Xóa toàn bộ form data và request log? (Token không bị xóa)')) return;
+  void chrome.storage.local.remove(FORM_KEY);
+  chrome.runtime.sendMessage({ type: 'CLEAR_LOG' });
+  const promptEl = document.getElementById('gen-prompt') as HTMLTextAreaElement | null;
+  const countEl = document.getElementById('gen-count') as HTMLInputElement | null;
+  const attemptsEl = document.getElementById('gen-attempts') as HTMLInputElement | null;
+  const modelEl = document.getElementById('gen-model') as HTMLSelectElement | null;
+  if (promptEl) promptEl.value = '';
+  if (countEl) countEl.value = '1';
+  if (attemptsEl) attemptsEl.value = '3';
+  if (modelEl) modelEl.value = 'nano_banana_pro';
+  genOrient = 'portrait';
+  selectedRefs = [];
+  renderRefStrip();
+  selectKind('image');
+  document.querySelectorAll<HTMLElement>('.orient-opt').forEach((o) =>
+    o.classList.toggle('active', o.getAttribute('data-orient') === 'portrait'),
+  );
+  updateSettingsSummary();
+  const results = document.getElementById('results');
+  if (results) results.classList.remove('show');
+  setGenStatus('Đã reset dữ liệu.', 'ok');
 }
 
 let _logEntries: LogEntry[] = [];
@@ -226,7 +268,7 @@ chrome.runtime.onMessage.addListener((msg) => {
   }
   if (msg?.type === 'GEN_PROGRESS' && msg.progress) {
     const p = msg.progress as GenProgress;
-    if (p.runId === activeRunId) setGenStatus(p.message, p.phase === 'error' ? 'err' : '');
+    if (p.runId === activeRunId && !stopRequested) setGenStatus(p.message, p.phase === 'error' ? 'err' : '');
   }
   if (msg?.type === 'GEN_TEMPLATES_UPDATE') refreshTemplateHint();
   // PROJECT_MEDIA_UPDATE (passive capture) no longer drives the picker —
@@ -472,19 +514,69 @@ function renderResults(media: GenResultMedia[], note?: string): void {
     .join('');
 }
 
+// ─── video model + duration (sourced from videoModelFamilies) ──
+interface VideoFamily { id: string; displayName: string; durations: number[] }
+let videoFamilies: VideoFamily[] = [];
+let genVideoModel = '';
+let genVideoLen: number | undefined;
+
+function toggleModelFields(): void {
+  const isVideo = genKind === 'video';
+  const set = (id: string, show: boolean) => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = show ? '' : 'none';
+  };
+  set('fld-image-model', !isVideo);
+  set('fld-video-model', isVideo);
+  const fam = videoFamilies.find((f) => f.id === genVideoModel);
+  set('fld-video-len', isVideo && !!fam && fam.durations.length > 1);
+}
+
+function fillVideoDurations(): void {
+  const sel = document.getElementById('gen-vlen') as HTMLSelectElement | null;
+  if (!sel) return;
+  const fam = videoFamilies.find((f) => f.id === genVideoModel);
+  const durs = fam?.durations || [];
+  sel.innerHTML = durs.map((d) => `<option value="${d}">${d}s</option>`).join('');
+  if (!genVideoLen || !durs.includes(genVideoLen)) genVideoLen = durs[0];
+  if (genVideoLen != null) sel.value = String(genVideoLen);
+  toggleModelFields();
+}
+
+function populateVideoModels(): void {
+  chrome.runtime.sendMessage({ type: 'GET_VIDEO_MODELS' }, (data) => {
+    if (chrome.runtime.lastError || !data) return;
+    videoFamilies = (data.families as VideoFamily[]) || [];
+    const sel = document.getElementById('gen-vmodel') as HTMLSelectElement | null;
+    if (sel) {
+      sel.innerHTML = videoFamilies.map((f) => `<option value="${escHtml(f.id)}">${escHtml(f.displayName)}</option>`).join('');
+      if (!genVideoModel || !videoFamilies.some((f) => f.id === genVideoModel)) genVideoModel = videoFamilies[0]?.id || '';
+      sel.value = genVideoModel;
+    }
+    fillVideoDurations();
+    updateSettingsSummary();
+  });
+}
+
 function updateSettingsSummary(): void {
   const el = document.getElementById('settings-summary');
   if (!el) return;
-  const modelEl = document.getElementById('gen-model') as HTMLSelectElement | null;
   const countEl = document.getElementById('gen-count') as HTMLInputElement | null;
   const attemptsEl = document.getElementById('gen-attempts') as HTMLInputElement | null;
-  const model = modelEl?.selectedOptions[0]?.textContent || modelEl?.value || '—';
   const orient = genOrient.charAt(0).toUpperCase() + genOrient.slice(1);
   const count = countEl?.value || '1';
   const attempts = attemptsEl?.value || '3';
   const dot = ' <span class="muted">·</span> ';
+  let model: string;
+  if (genKind === 'video') {
+    const fam = videoFamilies.find((f) => f.id === genVideoModel);
+    model = (fam?.displayName || 'Video') + (genVideoLen ? ` ${genVideoLen}s` : '');
+  } else {
+    const modelEl = document.getElementById('gen-model') as HTMLSelectElement | null;
+    model = modelEl?.selectedOptions[0]?.textContent || modelEl?.value || '—';
+  }
   el.innerHTML =
-    escHtml(model) + dot + orient + dot + `${escHtml(count)} ảnh` + dot + `${escHtml(attempts)} thử`;
+    escHtml(model) + dot + orient + dot + `${escHtml(count)} ${genKind === 'video' ? 'video' : 'ảnh'}` + dot + `${escHtml(attempts)} thử`;
 }
 
 function selectKind(kind: 'image' | 'video'): void {
@@ -492,6 +584,9 @@ function selectKind(kind: 'image' | 'video'): void {
   document.querySelectorAll<HTMLElement>('.gen-tab').forEach((tab) => {
     tab.classList.toggle('active', tab.getAttribute('data-kind') === kind);
   });
+  if (kind === 'video' && !videoFamilies.length) populateVideoModels();
+  else toggleModelFields();
+  updateSettingsSummary();
   refreshTemplateHint();
 }
 
@@ -517,6 +612,17 @@ function initGeneratePanel(): void {
   document.getElementById('gen-model')?.addEventListener('change', updateSettingsSummary);
   document.getElementById('gen-count')?.addEventListener('input', updateSettingsSummary);
   document.getElementById('gen-attempts')?.addEventListener('input', updateSettingsSummary);
+  document.getElementById('gen-vmodel')?.addEventListener('change', () => {
+    genVideoModel = (document.getElementById('gen-vmodel') as HTMLSelectElement).value;
+    fillVideoDurations();
+    updateSettingsSummary();
+  });
+  document.getElementById('gen-vlen')?.addEventListener('change', () => {
+    const v = (document.getElementById('gen-vlen') as HTMLSelectElement).value;
+    genVideoLen = v ? Number(v) : undefined;
+    updateSettingsSummary();
+  });
+  populateVideoModels();
 
   const promptEl = document.getElementById('gen-prompt') as HTMLTextAreaElement | null;
   const modelEl = document.getElementById('gen-model') as HTMLSelectElement | null;
@@ -542,7 +648,17 @@ function initGeneratePanel(): void {
   });
 
   document.getElementById('btn-generate')?.addEventListener('click', () => {
-    const btn = document.getElementById('btn-generate') as HTMLButtonElement | null;
+    // If already generating → act as Stop button
+    if (generating) {
+      stopRequested = true;
+      generating = false;
+      activeRunId = null; // drop all pending progress events
+      chrome.runtime.sendMessage({ type: 'CANCEL_GENERATE' });
+      setGenBtn('generate');
+      setGenStatus('Đã hủy.', '');
+      return;
+    }
+
     if (!flowReady) {
       setGenStatus(flowBlockReason(), 'err');
       return;
@@ -563,25 +679,30 @@ function initGeneratePanel(): void {
     const params = {
       mediaType: genKind,
       prompt,
-      model: modelEl?.value.trim() || undefined,
+      model: genKind === 'video' ? undefined : modelEl?.value.trim() || undefined,
+      videoModelFamily: genKind === 'video' ? genVideoModel || undefined : undefined,
+      videoLengthSeconds: genKind === 'video' ? genVideoLen : undefined,
       orientation: genOrient,
       count: Math.max(1, Number(countEl?.value) || 1),
       maxAttempts: Math.max(1, Number(attemptsEl?.value) || 3),
       references,
     };
-    // Persist form without bulky base64 refs.
     void chrome.storage.local.set({
       [FORM_KEY]: { ...params, kind: genKind, references: undefined },
     });
 
     activeRunId = `pending-${Date.now()}`;
     generating = true;
-    if (btn) btn.disabled = true;
+    stopRequested = false;
+    setGenBtn('stop');
     setGenStatus('Bắt đầu…');
 
     chrome.runtime.sendMessage({ type: 'GENERATE', params }, (result?: GenResult) => {
       generating = false;
-      if (btn) btn.disabled = !flowReady;
+      const wasStopped = stopRequested;
+      stopRequested = false;
+      setGenBtn('generate');
+      if (wasStopped) return; // UI already updated by stop click
       if (chrome.runtime.lastError) {
         setGenStatus(chrome.runtime.lastError.message || 'Lỗi gửi message', 'err');
         return;
@@ -601,7 +722,7 @@ function initGeneratePanel(): void {
 
   // Progress events carry the real runId; adopt it on first progress.
   chrome.runtime.onMessage.addListener((msg) => {
-    if (msg?.type === 'GEN_PROGRESS' && msg.progress?.runId && activeRunId?.startsWith('pending')) {
+    if (msg?.type === 'GEN_PROGRESS' && msg.progress?.runId && activeRunId?.startsWith('pending') && !stopRequested) {
       activeRunId = msg.progress.runId;
       setGenStatus(msg.progress.message, msg.progress.phase === 'error' ? 'err' : '');
     }
@@ -613,6 +734,7 @@ function initGeneratePanel(): void {
 }
 
 document.getElementById('btn-media')?.addEventListener('click', () => openMediaModal());
+document.getElementById('btn-clear')?.addEventListener('click', clearData);
 
 document.getElementById('btn-batch')?.addEventListener('click', () => {
   chrome.tabs.create({ url: chrome.runtime.getURL('batch.html') });

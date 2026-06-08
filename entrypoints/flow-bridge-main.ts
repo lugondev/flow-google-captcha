@@ -38,9 +38,20 @@ function scanForMedia(url: string, text: string, via: string): void {
   }
 }
 
-function readRequestBody(args: Parameters<typeof fetch>): string | null {
+async function readRequestBody(args: Parameters<typeof fetch>): Promise<string | null> {
   const init = args[1];
   if (init && typeof init.body === 'string') return init.body;
+  // fetch(new Request(url, { body })) — body lives on the Request, not init.
+  try {
+    if (args[0] instanceof Request) {
+      const text = await args[0].clone().text();
+      if (text) return text;
+    }
+  } catch {
+    /* body already consumed / not readable */
+  }
+  // URLSearchParams / other stringifiable bodies.
+  if (init && init.body != null && typeof init.body !== 'object') return String(init.body);
   return null;
 }
 
@@ -110,7 +121,7 @@ export default defineUnlistedScript(() => {
 
       // ── capture real generation requests as replay templates ──
       if (GEN_ENDPOINT_RE.test(url)) {
-        const rawBody = readRequestBody(args);
+        const rawBody = await readRequestBody(args);
         console.log('[FlowHelper] gen request seen:', url, rawBody ? '(body ok)' : '(NO BODY — cannot capture)');
         if (rawBody) {
           let parsed: unknown = rawBody;

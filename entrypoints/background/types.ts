@@ -81,6 +81,8 @@ export interface GenerateParams {
   workflowId?: string; // from /edit/<id> — bind request to current workflow
   clientId?: string; // batch row id — echoed back in GEN_PROGRESS so the caller can route progress
   noReload?: boolean; // batch parallel mode: don't reload the shared Flow tab on 403 (would break sibling rows)
+  videoModelFamily?: string; // video: model family id (e.g. abra) → resolved to a videoModelName key
+  videoLengthSeconds?: number; // video: requested clip duration (gates the resolved model key)
 }
 
 export interface GenResultMedia {

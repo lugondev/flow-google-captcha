@@ -16,6 +16,7 @@ let root: HTMLElement | null = null;
 let media: MediaItem[] = [];
 const selected = new Set<string>();
 let scope: 'workflow' | 'project' = 'project';
+let projectIdOverride: string | undefined; // when opened from a switched batch project
 
 const esc = (s: unknown) =>
   String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
@@ -149,7 +150,7 @@ function load(): void {
   reflectScope();
   $('.mm-grid').innerHTML = '<div class="mm-empty">Đang tải…</div>';
   selected.clear();
-  chrome.runtime.sendMessage({ type: 'GET_PROJECT_MEDIA', scope }, (data) => {
+  chrome.runtime.sendMessage({ type: 'GET_PROJECT_MEDIA', scope, projectId: projectIdOverride }, (data) => {
     if (chrome.runtime.lastError || !data) { media = []; $('.mm-grid').innerHTML = `<div class="mm-empty">Lỗi: ${esc(chrome.runtime.lastError?.message || 'no data')}</div>`; updateButtons(); return; }
     if (data.error) { media = []; $('.mm-grid').innerHTML = `<div class="mm-empty">${esc(data.error)}</div>`; updateButtons(); return; }
     media = (data.media as MediaItem[]) || [];
@@ -240,8 +241,9 @@ async function tileAction(btn: HTMLButtonElement, act: string, id: string): Prom
 
 function close(): void { root?.classList.remove('open'); }
 
-export function openMediaModal(initialScope: 'workflow' | 'project' = 'workflow'): void {
+export function openMediaModal(projectId?: string, initialScope: 'workflow' | 'project' = 'workflow'): void {
   ensureDom();
+  projectIdOverride = projectId;
   scope = initialScope;
   root!.classList.add('open');
   load();

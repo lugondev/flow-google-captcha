@@ -47,6 +47,9 @@
       .btn-primary { background: var(--grad); border-color: transparent; color: #fff; box-shadow: 0 4px 14px rgba(99,102,241,.25); }
       .btn-primary:hover { filter: brightness(1.08); border-color: transparent; }
       .btn-danger:hover { border-color: var(--red); color: var(--red); }
+      .btn-stop { border-color: var(--red); color: var(--red); }
+      .btn-stop:hover:not(:disabled) { background: rgba(239,68,68,.12); }
+      .btn-stop:disabled { opacity: .4; cursor: default; }
 
       .table-wrap { flex: 1; overflow: auto; padding: 0 20px 20px; }
       table { width: 100%; border-collapse: separate; border-spacing: 0; margin-top: 14px; }
@@ -96,6 +99,9 @@
       .pb-item { color: var(--muted); display: flex; align-items: center; gap: 5px; }
       .pb-item b { color: var(--text); font-weight: 600; }
       .pb-item code { font-family: var(--mono); font-size: 11px; color: var(--accent); background: var(--card); padding: 1px 6px; border-radius: 4px; }
+      .pb-select, .pb-input { font-family: var(--font); font-size: 12px; color: var(--text); background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; max-width: 240px; }
+      .pb-input { width: 150px; }
+      .pb-select:focus, .pb-input:focus { outline: none; border-color: var(--accent); }
       .pb-item.warn { color: var(--yellow); }
       .pb-spacer { margin-left: auto; }
       .pb-btn { padding: 5px 10px; font-size: 11px; font-weight: 600; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--card); color: var(--text); cursor: pointer; }
@@ -155,12 +161,13 @@
     </header>
 
     <div class="project-bar">
-      <span class="pb-item">Project: <b id="pi-name">—</b></span>
-      <span class="pb-item">id: <code id="pi-id">—</code></span>
-      <span class="pb-item">workflow: <code id="pi-wf">—</code></span>
+      <span class="pb-item">Project <select id="pi-project" class="pb-select"><option value="">(tab hiện tại)</option></select>
+        <button class="pb-btn" id="pi-rename" title="Đổi tên project">✏️</button></span>
+      <span class="pb-item">Workflow <select id="pi-workflow" class="pb-select"><option value="">(mặc định)</option></select>
+        <input id="pi-wf-manual" class="pb-input" placeholder="hoặc nhập workflowId…" /></span>
       <span class="pb-spacer"></span>
       <button class="pb-btn" id="pi-media">📁 Media</button>
-      <button class="pb-btn" id="pi-refresh" title="Làm mới thông tin project">↻ Làm mới</button>
+      <button class="pb-btn" id="pi-refresh" title="Làm mới danh sách project/workflow">↻ Làm mới</button>
       <button class="pb-btn" id="pi-open">↗ Mở tab Flow</button>
     </div>
 
@@ -172,6 +179,7 @@
       <div class="tb-field"><span class="tb-label">&nbsp;</span><button class="btn" id="btn-add-paste">+ Thêm từ ô trên</button></div>
       <div class="tb-field"><span class="tb-label">&nbsp;</span><button class="btn" id="btn-add-row">+ Dòng trống</button></div>
       <div class="tb-field"><span class="tb-label">&nbsp;</span><button class="btn btn-primary" id="btn-run-all">▶ Chạy tất cả</button></div>
+      <div class="tb-field"><span class="tb-label">&nbsp;</span><button class="btn btn-stop" id="btn-stop-all" disabled>⬛ Dừng</button></div>
       <div class="tb-field"><span class="tb-label">&nbsp;</span><button class="btn btn-danger" id="btn-del-selected">Xóa đã chọn</button></div>
     </div>
 
@@ -192,9 +200,17 @@
             <span class="tb-label">Loại</span>
             <select id="s-kind"><option value="image">Image</option><option value="video">Video</option></select>
           </div>
-          <div class="tb-field">
+          <div class="tb-field" id="fld-image-model">
             <span class="tb-label">Model</span>
             <select id="s-model"><option value="nano_banana_pro">🍌 Nano Banana Pro</option><option value="narwhal_display">🍌 Nano Banana 2</option></select>
+          </div>
+          <div class="tb-field" id="fld-video-model" style="display:none">
+            <span class="tb-label">Video model</span>
+            <select id="s-vmodel"></select>
+          </div>
+          <div class="tb-field" id="fld-video-len" style="display:none">
+            <span class="tb-label">Thời lượng</span>
+            <select id="s-vlen"></select>
           </div>
           <div class="tb-field">
             <span class="tb-label">Orientation</span>
@@ -227,6 +243,9 @@
 
     <footer class="footer">
       <div class="state-bar">TOKEN <span id="token-status" class="bad">no token</span></div>
+      <div class="f-actions">
+        <button class="btn btn-danger" id="btn-clear-batch" title="Xóa toàn bộ rows, refs, settings về mặc định">↺ Reset dữ liệu</button>
+      </div>
       <div class="signature">
         <a href="https://github.com/lugondev/flow-google-captcha" target="_blank" rel="noopener">
           <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-2px;margin-right:3px"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>Flow Helper · lugondev/flow-google-captcha

@@ -32,22 +32,27 @@ interface Row {
 interface Settings {
   mediaType: 'image' | 'video';
   model: string;
+  videoModel: string; // video model family id (e.g. abra)
+  videoLengthSeconds?: number; // video duration (only some families offer a choice)
   orientation: 'landscape' | 'portrait' | 'square';
   count: number;
   maxAttempts: number;
   concurrency: number;
 }
+interface VideoFamily { id: string; displayName: string; durations: number[] }
+let videoFamilies: VideoFamily[] = [];
 interface ProjectMedia { mediaId: string; type: 'image' | 'video'; prompt?: string; url?: string }
 
 const STORE_KEY = 'batchState';
 let rows: Row[] = [];
 let globalRefs: BatchRef[] = []; // style refs auto-merged into every row at run time
 let running = false;
+let batchCancelled = false;
 let seq = 0;
 
 const settings: Settings = {
-  mediaType: 'image', model: 'nano_banana_pro', orientation: 'portrait',
-  count: 1, maxAttempts: 3, concurrency: 3,
+  mediaType: 'image', model: 'nano_banana_pro', videoModel: '', videoLengthSeconds: undefined,
+  orientation: 'portrait', count: 1, maxAttempts: 3, concurrency: 3,
 };
 
 // ─── helpers ──────────────────────────────────────────────────
@@ -82,7 +87,7 @@ function saveBatch(): void {
   const slimGlobal = globalRefs
     .filter((x) => x.source === 'project')
     .map((x) => ({ source: x.source, url: x.url, mediaId: x.mediaId, thumb: x.thumb, name: x.name }));
-  void chrome.storage.local.set({ [STORE_KEY]: { rows: slim, settings, globalRefs: slimGlobal } });
+  void chrome.storage.local.set({ [STORE_KEY]: { rows: slim, settings, globalRefs: slimGlobal, sel: { projectId: selProjectId, workflowId: selWorkflowId } } });
 }
 async function loadBatch(): Promise<void> {
   const data = await chrome.storage.local.get(STORE_KEY);
@@ -90,6 +95,7 @@ async function loadBatch(): Promise<void> {
   if (!saved) return;
   if (saved.settings) Object.assign(settings, saved.settings);
   if (Array.isArray(saved.globalRefs)) globalRefs = saved.globalRefs as BatchRef[];
+  if (saved.sel) { selProjectId = saved.sel.projectId || ''; selWorkflowId = saved.sel.workflowId || ''; }
   if (Array.isArray(saved.rows)) {
     rows = saved.rows.map((r: Partial<Row>) => ({
       id: r.id || uid(), prompt: r.prompt || '', refs: (r.refs as BatchRef[]) || [],
@@ -103,6 +109,9 @@ async function loadBatch(): Promise<void> {
 function readSettings(): void {
   settings.mediaType = ($('s-kind') as HTMLSelectElement).value as Settings['mediaType'];
   settings.model = ($('s-model') as HTMLSelectElement).value;
+  settings.videoModel = ($('s-vmodel') as HTMLSelectElement).value;
+  const vlen = ($('s-vlen') as HTMLSelectElement).value;
+  settings.videoLengthSeconds = vlen ? Number(vlen) : undefined;
   settings.orientation = ($('s-orient') as HTMLSelectElement).value as Settings['orientation'];
   settings.count = Math.max(1, Number(($('s-count') as HTMLInputElement).value) || 1);
   settings.maxAttempts = Math.max(1, Number(($('s-attempts') as HTMLInputElement).value) || 3);
@@ -117,6 +126,43 @@ function applySettingsToInputs(): void {
   ($('s-count') as HTMLInputElement).value = String(settings.count);
   ($('s-attempts') as HTMLInputElement).value = String(settings.maxAttempts);
   ($('s-concurrency') as HTMLInputElement).value = String(settings.concurrency);
+  toggleModelFields();
+}
+
+// ─── video model + duration (sourced from videoModelFamilies) ──
+function toggleModelFields(): void {
+  const isVideo = settings.mediaType === 'video';
+  ($('fld-image-model') as HTMLElement).style.display = isVideo ? 'none' : '';
+  ($('fld-video-model') as HTMLElement).style.display = isVideo ? '' : 'none';
+  const fam = videoFamilies.find((f) => f.id === settings.videoModel);
+  const showLen = isVideo && !!fam && fam.durations.length > 1;
+  ($('fld-video-len') as HTMLElement).style.display = showLen ? '' : 'none';
+}
+
+function fillVideoDurations(): void {
+  const sel = $('s-vlen') as HTMLSelectElement;
+  const fam = videoFamilies.find((f) => f.id === settings.videoModel);
+  const durs = fam?.durations || [];
+  sel.innerHTML = durs.map((d) => `<option value="${d}">${d}s</option>`).join('');
+  // keep chosen duration if still valid, else default to the first
+  if (settings.videoLengthSeconds && durs.includes(settings.videoLengthSeconds)) sel.value = String(settings.videoLengthSeconds);
+  else settings.videoLengthSeconds = durs[0];
+  if (settings.videoLengthSeconds != null) sel.value = String(settings.videoLengthSeconds);
+  toggleModelFields();
+}
+
+function populateVideoModels(): void {
+  chrome.runtime.sendMessage({ type: 'GET_VIDEO_MODELS', projectId: selProjectId || undefined }, (data) => {
+    if (chrome.runtime.lastError || !data) return;
+    videoFamilies = (data.families as VideoFamily[]) || [];
+    const sel = $('s-vmodel') as HTMLSelectElement;
+    sel.innerHTML = videoFamilies.map((f) => `<option value="${escHtml(f.id)}">${escHtml(f.displayName)}</option>`).join('');
+    if (!settings.videoModel || !videoFamilies.some((f) => f.id === settings.videoModel)) {
+      settings.videoModel = videoFamilies[0]?.id || '';
+    }
+    sel.value = settings.videoModel;
+    fillVideoDurations();
+  });
 }
 
 // ─── rendering ──
@@ -194,6 +240,10 @@ function runRow(row: Row, noReload: boolean): Promise<void> {
       count: settings.count,
       maxAttempts: settings.maxAttempts,
       references: mergeRefs(row).map((r) => ({ source: r.source, name: r.name, mime: r.mime, base64: r.base64, url: r.url, mediaId: r.mediaId })),
+      projectId: selProjectId || undefined,
+      workflowId: selWorkflowId || undefined,
+      videoModelFamily: settings.mediaType === 'video' ? settings.videoModel || undefined : undefined,
+      videoLengthSeconds: settings.mediaType === 'video' ? settings.videoLengthSeconds : undefined,
       clientId: row.id,
       noReload,
     };
@@ -218,22 +268,51 @@ function runRow(row: Row, noReload: boolean): Promise<void> {
 
 async function runMany(targets: Row[], noReload: boolean): Promise<void> {
   if (running || !targets.length) return;
-  running = true; setRunUI(true);
+  running = true;
+  batchCancelled = false;
+  setRunUI(true);
   targets.forEach((r) => { r.status = 'queued'; updateRow(r); });
   let i = 0;
   const worker = async (): Promise<void> => {
-    while (i < targets.length) {
+    while (i < targets.length && !batchCancelled) {
       const row = targets[i++]!;
       await runRow(row, noReload);
     }
   };
   await Promise.all(Array.from({ length: Math.min(settings.concurrency, targets.length) }, () => worker()));
-  running = false; setRunUI(false);
+  // Reset any rows still in queued state (cancelled before they started)
+  rows.forEach((r) => { if (r.status === 'queued') { r.status = 'idle'; updateRow(r); } });
+  running = false;
+  batchCancelled = false;
+  setRunUI(false);
 }
 
 function setRunUI(on: boolean): void {
+  ($('btn-run-all') as HTMLButtonElement).disabled = on || !flowReady;
   ($('btn-run-all') as HTMLButtonElement).textContent = on ? '⏳ Đang chạy…' : '▶ Chạy tất cả';
+  const stopBtn = $('btn-stop-all') as HTMLButtonElement | null;
+  if (stopBtn) stopBtn.disabled = !on;
   reflectReady();
+}
+
+function clearBatch(): void {
+  if (!confirm('Xóa toàn bộ dữ liệu batch (rows, refs, settings) về mặc định?')) return;
+  rows = [];
+  globalRefs = [];
+  selProjectId = '';
+  selWorkflowId = '';
+  Object.assign(settings, {
+    mediaType: 'image', model: 'nano_banana_pro', videoModel: '', videoLengthSeconds: undefined,
+    orientation: 'portrait', count: 1, maxAttempts: 3, concurrency: 3,
+  });
+  void chrome.storage.local.remove(STORE_KEY);
+  applySettingsToInputs();
+  updateSettingsSummary();
+  render();
+  renderGlobalRefs();
+  ($('pi-project') as HTMLSelectElement).value = '';
+  ($('pi-workflow') as HTMLSelectElement).innerHTML = '<option value="">(mặc định)</option>';
+  ($('pi-wf-manual') as HTMLInputElement).value = '';
 }
 
 // ─── flow readiness, token status, project info ──
@@ -242,7 +321,7 @@ let flowReady = false;
 function blockReason(): string { return 'Cần mở tab Flow (đang đăng nhập, có token) trước khi tạo.'; }
 
 function reflectReady(): void {
-  ($('btn-run-all') as HTMLButtonElement).disabled = running || !flowReady;
+  if (!running) ($('btn-run-all') as HTMLButtonElement).disabled = !flowReady;
 }
 
 function fetchStatus(): void {
@@ -260,20 +339,42 @@ function fetchStatus(): void {
   });
 }
 
+// ─── project / workflow switching ──
+let selProjectId = '';
+let selWorkflowId = '';
+let tabProjectId = '';
+
+function populateProjects(): void {
+  chrome.runtime.sendMessage({ type: 'GET_PROJECTS' }, (data) => {
+    if (chrome.runtime.lastError || !data) return;
+    const sel = $('pi-project') as HTMLSelectElement;
+    const projects = (data.projects as { projectId: string; title: string }[]) || [];
+    sel.innerHTML =
+      '<option value="">(tab hiện tại)</option>' +
+      projects.map((p) => `<option value="${escHtml(p.projectId)}">${escHtml(p.title)}</option>`).join('');
+    sel.value = selProjectId || '';
+    if (selProjectId) loadWorkflows(selProjectId);
+  });
+}
+
+function loadWorkflows(pid: string): void {
+  const sel = $('pi-workflow') as HTMLSelectElement;
+  sel.innerHTML = '<option value="">(đang tải…)</option>';
+  chrome.runtime.sendMessage({ type: 'GET_WORKFLOWS', projectId: pid }, (data) => {
+    const wfs: { workflowId: string; count: number }[] =
+      (!chrome.runtime.lastError && data && data.workflows) || [];
+    sel.innerHTML =
+      '<option value="">(mặc định)</option>' +
+      wfs.map((w) => `<option value="${escHtml(w.workflowId)}">${escHtml(w.workflowId.slice(0, 8))}… (${w.count})</option>`).join('');
+    sel.value = selWorkflowId || '';
+  });
+}
+
 function fetchProjectInfo(): void {
+  // Track the tab's project so '(tab hiện tại)' stays meaningful.
   chrome.runtime.sendMessage({ type: 'GET_PROJECT_INFO' }, (info) => {
     if (chrome.runtime.lastError || !info) return;
-    const nameEl = $('pi-name')!, idEl = $('pi-id')!, wfEl = $('pi-wf')!;
-    if (!info.hasTab) {
-      nameEl.textContent = 'Chưa mở tab Flow';
-      idEl.textContent = '—'; wfEl.textContent = '—';
-      nameEl.closest('.pb-item')?.classList.add('warn');
-      return;
-    }
-    nameEl.closest('.pb-item')?.classList.remove('warn');
-    nameEl.textContent = info.name || '(không tên)';
-    idEl.textContent = info.projectId || '—';
-    wfEl.textContent = info.workflowId || '—';
+    tabProjectId = info.hasTab ? info.projectId || '' : '';
   });
 }
 
@@ -372,7 +473,7 @@ function mergeRefs(row: Row): BatchRef[] {
 function loadProjectGrid(): void {
   const pg = $('ref-pg')!;
   pg.innerHTML = '<div class="modal-hint">Đang tải từ project…</div>';
-  chrome.runtime.sendMessage({ type: 'GET_PROJECT_MEDIA' }, (data) => {
+  chrome.runtime.sendMessage({ type: 'GET_PROJECT_MEDIA', projectId: selProjectId || undefined }, (data) => {
     if (chrome.runtime.lastError || !data) { pg.innerHTML = `<div class="modal-hint">Lỗi: ${escHtml(chrome.runtime.lastError?.message || 'no data')}</div>`; return; }
     if (data.error) { pg.innerHTML = `<div class="modal-hint">${escHtml(data.error)}</div>`; return; }
     const all = (data.media as ProjectMedia[]) || [];
@@ -446,17 +547,73 @@ function initToolbar(): void {
     if (!flowReady) { fetchStatus(); return; }
     readSettings();
     const targets = rows.filter((r) => r.status !== 'done' && r.prompt.trim());
-    void runMany(targets, true); // parallel batch → suppress per-row tab reload
+    void runMany(targets, true);
   });
-  ['s-kind', 's-model', 's-orient', 's-count', 's-attempts', 's-concurrency'].forEach((id) =>
+  $('btn-stop-all')!.addEventListener('click', () => {
+    if (!running) return;
+    batchCancelled = true;
+    rows.forEach((r) => { if (r.status === 'queued') { r.status = 'idle'; updateRow(r); } });
+  });
+  $('btn-clear-batch')!.addEventListener('click', clearBatch);
+  ['s-model', 's-orient', 's-count', 's-attempts', 's-concurrency', 's-vlen'].forEach((id) =>
     $(id)!.addEventListener('change', readSettings),
   );
+  $('s-kind')!.addEventListener('change', () => {
+    readSettings();
+    if (settings.mediaType === 'video' && !videoFamilies.length) populateVideoModels();
+    else toggleModelFields();
+  });
+  $('s-vmodel')!.addEventListener('change', () => {
+    settings.videoModel = ($('s-vmodel') as HTMLSelectElement).value;
+    fillVideoDurations();
+    readSettings();
+  });
   $('settings-toggle')!.addEventListener('click', () => $('settings-card')!.classList.toggle('open'));
 
   // Project-bar actions (footer just shows token status + credit now)
   $('pi-open')!.addEventListener('click', () => chrome.runtime.sendMessage({ type: 'OPEN_FLOW_TAB' }));
-  $('pi-media')!.addEventListener('click', () => openMediaModal());
-  $('pi-refresh')!.addEventListener('click', () => { fetchProjectInfo(); fetchStatus(); });
+  $('pi-media')!.addEventListener('click', () => openMediaModal(selProjectId || undefined));
+  $('pi-refresh')!.addEventListener('click', () => { populateProjects(); populateVideoModels(); fetchProjectInfo(); fetchStatus(); });
+  $('pi-project')!.addEventListener('change', (e) => {
+    selProjectId = (e.target as HTMLSelectElement).value;
+    selWorkflowId = '';
+    ($('pi-wf-manual') as HTMLInputElement).value = '';
+    if (selProjectId) loadWorkflows(selProjectId);
+    else ($('pi-workflow') as HTMLSelectElement).innerHTML = '<option value="">(mặc định)</option>';
+    populateVideoModels();
+    saveBatch();
+  });
+  $('pi-workflow')!.addEventListener('change', (e) => {
+    selWorkflowId = (e.target as HTMLSelectElement).value;
+    ($('pi-wf-manual') as HTMLInputElement).value = '';
+    saveBatch();
+  });
+  $('pi-wf-manual')!.addEventListener('input', (e) => {
+    const v = (e.target as HTMLInputElement).value.trim();
+    selWorkflowId = v.match(/\/edit\/([0-9a-f-]{36})/)?.[1] || v;
+    if (v) ($('pi-workflow') as HTMLSelectElement).value = '';
+    saveBatch();
+  });
+  $('pi-rename')!.addEventListener('click', () => {
+    const pid = selProjectId || tabProjectId;
+    if (!pid) { alert('Chọn một project (hoặc mở tab Flow) trước khi đổi tên.'); return; }
+    const projSel = $('pi-project') as HTMLSelectElement;
+    const cur = selProjectId ? (projSel.selectedOptions[0]?.textContent || '').trim() : '';
+    const name = window.prompt('Tên project mới:', cur);
+    if (name == null) return;
+    const title = name.trim();
+    if (!title) return;
+    const btn = $('pi-rename') as HTMLButtonElement;
+    btn.disabled = true;
+    chrome.runtime.sendMessage({ type: 'UPDATE_PROJECT_TITLE', projectId: pid, title }, (res) => {
+      btn.disabled = false;
+      if (chrome.runtime.lastError || !res?.ok) {
+        alert('Đổi tên lỗi: ' + (res?.error || chrome.runtime.lastError?.message || 'unknown'));
+        return;
+      }
+      populateProjects(); // refresh dropdown to show the new title
+    });
+  });
   $('chk-all')!.addEventListener('change', (e) => {
     const on = (e.target as HTMLInputElement).checked;
     document.querySelectorAll<HTMLInputElement>('#rows input[data-act="sel"]').forEach((c) => (c.checked = on));
@@ -521,6 +678,8 @@ async function main(): Promise<void> {
   renderGlobalRefs();
   fetchStatus();
   fetchProjectInfo();
+  populateProjects();
+  populateVideoModels();
   setInterval(() => { fetchStatus(); fetchProjectInfo(); }, 15000);
 }
 void main();

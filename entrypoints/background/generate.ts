@@ -26,7 +26,7 @@ import type {
 
 const TEMPLATES_KEY = 'genTemplates';
 const POLL_INTERVAL_MS = 4000;
-const POLL_MAX_TICKS = 60; // ~4 min ceiling per attempt
+const POLL_MAX_TICKS = 120; // ~8 min ceiling (some Veo modes render 200–330s)
 const GCS_URL_RE =
   /https:\/\/storage\.googleapis\.com\/[A-Za-z0-9._-]+\/(?:image|video)\/[0-9a-f-]{36}\?[^"'\\\s]+/g;
 
@@ -339,6 +339,62 @@ async function resolveReferences(
  * reference-entry shape found in the template; otherwise inserts a best-effort
  * entry. Logged so the real shape can be confirmed from captured payloads.
  */
+/** Recursively delete every occurrence of the given keys. */
+function deepDelete(node: unknown, keys: Set<string>): void {
+  if (Array.isArray(node)) return node.forEach((n) => deepDelete(n, keys));
+  if (!node || typeof node !== 'object') return;
+  const o = node as Record<string, unknown>;
+  for (const k of Object.keys(o)) {
+    if (keys.has(k)) delete o[k];
+    else deepDelete(o[k], keys);
+  }
+}
+
+/**
+ * Adapt a captured video request to the requested mode by image count:
+ *   0 → text-to-video (strip all image inputs)
+ *   1 → image-to-video (startImage)
+ *   2 → start + end frame (startImage + endImage)
+ *   3–7 → references / "thành phần" (referenceImages[])
+ * One captured video request thus serves every mode.
+ */
+function adaptVideoBody(body: unknown, handles: RefHandle[]): void {
+  if (!handles.length) {
+    // text-to-video: no start/end image, references emptied (kept as []).
+    deepDelete(body, new Set(['startImage', 'endImage', 'videoGenerationImageInputs', 'imageInputs']));
+    const emptyRefs = (node: unknown): void => {
+      if (Array.isArray(node)) return node.forEach(emptyRefs);
+      if (!node || typeof node !== 'object') return;
+      const o = node as Record<string, unknown>;
+      for (const [k, v] of Object.entries(o)) {
+        if (Array.isArray(v) && /reference/i.test(k)) o[k] = [];
+        else if (typeof v === 'object') emptyRefs(v);
+      }
+    };
+    emptyRefs(body);
+    return;
+  }
+  const setId = (obj: Record<string, unknown>, id?: string): void => {
+    if (!id) return;
+    if ('mediaId' in obj || !('name' in obj)) obj.mediaId = id;
+    if ('name' in obj) obj.name = id;
+  };
+  const walk = (node: unknown): void => {
+    if (Array.isArray(node)) return node.forEach(walk);
+    if (!node || typeof node !== 'object') return;
+    const o = node as Record<string, unknown>;
+    for (const [key, val] of Object.entries(o)) {
+      const k = key.toLowerCase();
+      if (k === 'startimage' && val && typeof val === 'object') setId(val as Record<string, unknown>, handles[0]?.mediaId);
+      else if (k === 'endimage' && val && typeof val === 'object') setId(val as Record<string, unknown>, handles[1]?.mediaId);
+      else if (Array.isArray(val) && /reference|imageinput|mediainput|inputimage/.test(k)) {
+        o[key] = handles.map((h) => ({ mediaId: h.mediaId, imageUsageType: 'IMAGE_USAGE_TYPE_ASSET' }));
+      } else if (typeof val === 'object') walk(val);
+    }
+  };
+  walk(body);
+}
+
 function injectReferences(body: unknown, handles: RefHandle[]): void {
   if (!handles.length) return;
 
@@ -402,12 +458,10 @@ function injectReferences(body: unknown, handles: RefHandle[]): void {
   }
 }
 
-function pickTemplate(kind: MediaKind, hasRefs: boolean): GenTemplate | undefined {
-  // Image: we know the real schema — build it from scratch (no capture needed).
+function pickTemplate(kind: MediaKind, refCount: number): GenTemplate {
+  // Both image and video use hardcoded V2 built-in schemas — no capture needed.
   if (kind === 'image') return templates.image ?? defaultImageTemplate();
-  // Video: schema not yet hardcoded — rely on a captured template.
-  if (hasRefs && templates.videoRef) return templates.videoRef;
-  return templates.video;
+  return defaultVideoTemplate(videoModeForCount(refCount));
 }
 
 /**
@@ -442,6 +496,71 @@ function defaultImageTemplate(): GenTemplate {
       ],
     },
     capturedAt: 0,
+  };
+}
+
+export type VideoMode = 't2v' | 'i2v' | 'startend' | 'r2v';
+
+/** Map reference-image count → video mode (matches Flow's per-mode endpoints). */
+export function videoModeForCount(n: number): VideoMode {
+  if (n <= 0) return 't2v';
+  if (n === 1) return 'i2v';
+  if (n === 2) return 'startend';
+  return 'r2v';
+}
+
+const VIDEO_ENDPOINTS: Record<VideoMode, string> = {
+  t2v: 'https://aisandbox-pa.googleapis.com/v1/video:batchAsyncGenerateVideoText',
+  i2v: 'https://aisandbox-pa.googleapis.com/v1/video:batchAsyncGenerateVideoStartAndEndImage',
+  startend: 'https://aisandbox-pa.googleapis.com/v1/video:batchAsyncGenerateVideoStartAndEndImage',
+  r2v: 'https://aisandbox-pa.googleapis.com/v1/video:batchAsyncGenerateVideoReferenceImages',
+};
+
+/**
+ * Built-in video template per mode (V2 schema, confirmed against real Flow
+ * requests). Endpoint + image field differ by mode:
+ *   t2v → …Text (no image)   i2v/startend → …StartAndEndImage (startImage[+endImage])
+ *   r2v → …ReferenceImages (referenceImages[])
+ * videoModelKey / prompt / aspectRatio / seed / ids / recaptcha / images are
+ * filled by applyOverrides / adaptVideoBody / injectCaptchaToken.
+ */
+function defaultVideoTemplate(mode: VideoMode): GenTemplate {
+  const req: Record<string, unknown> = {
+    aspectRatio: 'VIDEO_ASPECT_RATIO_PORTRAIT',
+    textInput: { structuredPrompt: { parts: [{ text: '' }] } },
+    videoModelKey: '',
+    seed: 0,
+    metadata: {},
+  };
+  if (mode === 'i2v') req.startImage = { mediaId: '' };
+  else if (mode === 'startend') { req.startImage = { mediaId: '' }; req.endImage = { mediaId: '' }; }
+  else if (mode === 'r2v') req.referenceImages = [];
+  return {
+    url: VIDEO_ENDPOINTS[mode],
+    headers: { 'content-type': 'text/plain;charset=UTF-8' },
+    capturedAt: 0,
+    body: {
+      mediaGenerationContext: { batchId: '', audioFailurePreference: 'BLOCK_SILENCED_VIDEOS' },
+      clientContext: {
+        projectId: '',
+        tool: 'PINHOLE',
+        userPaygateTier: 'PAYGATE_TIER_ONE',
+        sessionId: `;${Date.now()}`,
+        recaptchaContext: { token: '', applicationType: 'RECAPTCHA_APPLICATION_TYPE_WEB' },
+      },
+      requests: [req],
+      useV2ModelConfig: true,
+    },
+  };
+}
+
+/** Built-in poll template (batchCheckAsync) — operations injected per submission. */
+function defaultVideoPollTemplate(): GenTemplate {
+  return {
+    url: 'https://aisandbox-pa.googleapis.com/v1/video:batchCheckAsyncVideoGenerationStatus',
+    headers: { 'content-type': 'text/plain;charset=UTF-8' },
+    capturedAt: 0,
+    body: { operations: [] },
   };
 }
 
@@ -511,6 +630,16 @@ type Attempt =
   | { kind: 'blocked'; error: string } // safety block — deterministic, do NOT retry
   | { kind: 'retry'; error: string }; // captcha/4xx/5xx — backoff + retry
 
+// ─── Cancellation ─────────────────────────────────────────────
+
+interface CancelToken { cancelled: boolean }
+let activeCancelToken: CancelToken | null = null;
+
+/** Cancel whatever runGenerate is currently executing (if any). */
+export function cancelCurrentRun(): void {
+  if (activeCancelToken) activeCancelToken.cancelled = true;
+}
+
 // ─── Core engine ──────────────────────────────────────────────
 
 interface RunDeps {
@@ -525,31 +654,20 @@ export async function runGenerate(
   params: GenerateParams,
   deps: RunDeps,
 ): Promise<GenResult> {
+  const ct: CancelToken = { cancelled: false };
+  activeCancelToken = ct;
+  const cancelled = () => ct.cancelled;
+
   const kind = params.mediaType;
   const refs = params.references ?? [];
   const hasRefs = refs.length > 0;
-  const template = pickTemplate(kind, hasRefs);
-  if (!template) {
-    const want = kind === 'video' && hasRefs ? 'videoRef' : kind;
-    return {
-      runId,
-      ok: false,
-      media: [],
-      attempts: 0,
-      error:
-        `NO_TEMPLATE: chưa capture được request ${want}. Hãy generate 1 lần (loại tương ứng) trên Flow UI để extension học request mẫu.`,
-    };
-  }
+  const template = pickTemplate(kind, refs.length); // built-in schema, always available
 
   const max = Math.max(1, params.maxAttempts || 1);
   const captchaAction = kind === 'image' ? 'IMAGE_GENERATION' : 'VIDEO_GENERATION';
   const submitUrl = withProjectId(template.url, params.projectId);
   let lastError = 'UNKNOWN';
   let lastRaw: string | undefined;
-  // Count 403s across attempts. A single 403 is often transient (stale captcha
-  // binding) and clears on a retry with a fresh captcha — so we DON'T reload the
-  // Flow tab mid-run (that disrupts the session and causes the next 403). Only if
-  // EVERY attempt 403s do we hard-recover (reload tab + re-sync token) afterwards.
   let count403 = 0;
 
   // Resolve reference images once (upload new files, pass through project ones).
@@ -580,6 +698,7 @@ export async function runGenerate(
     startLogEntry(logId, submitUrl, undefined);
 
     try {
+      if (cancelled()) return null;
       // 1) Fresh captcha each attempt (single-use token)
       progress('captcha', `Attempt ${label} — giải captcha…`);
       const cap = await solveCaptcha(logId, captchaAction);
@@ -590,10 +709,12 @@ export async function runGenerate(
         return null;
       }
 
+      if (cancelled()) { markLogFailed(logId, 'CANCELLED'); return null; }
       // 2) Build + submit
       progress('submit', `Attempt ${label} — gửi request…`);
       const overridden = applyOverrides(template.body, params);
-      if (refHandles.length) injectReferences(overridden, refHandles);
+      if (kind === 'video') adaptVideoBody(overridden, refHandles);
+      else if (refHandles.length) injectReferences(overridden, refHandles);
       const body = injectCaptchaToken(overridden, cap.token);
       const res = await submit(submitUrl, body, template.headers);
       lastRaw = res.text.slice(0, 2000);
@@ -608,7 +729,12 @@ export async function runGenerate(
         // For video, an "empty" submit means we got an operation to poll.
         if (kind === 'video') {
           progress('poll', `Attempt ${label} — chờ video render…`);
-          const polled = await pollVideo(res.text, progress);
+          const pollExclude = new Set<string>(
+            [params.projectId, params.workflowId, ...refHandles.map((h) => h.mediaId)].filter(
+              (x): x is string => !!x,
+            ),
+          );
+          const polled = await pollVideo(res.text, pollExclude, progress, cancelled);
           if (polled.length) {
             markLogSuccess(logId, res.status, 'video ready', polled);
             progress('done', `Video xong sau ${attempt} lần thử.`);
@@ -680,9 +806,11 @@ export async function runGenerate(
 
   // Main attempt budget.
   for (let attempt = 1; attempt <= max; attempt++) {
+    if (cancelled()) return { runId, ok: false, media: [], attempts: attempt - 1, error: 'CANCELLED' };
     const result = await attemptOnce(attempt, `${attempt}/${max}`);
-    if (result) return result;
+    if (result) { activeCancelToken = null; return result; }
   }
+  activeCancelToken = null;
 
   // Every attempt 403'd → the Flow session is stale. In batch parallel mode we
   // must NOT reload the shared Flow tab (it would break sibling rows) — just fail
@@ -788,23 +916,158 @@ function classify(res: SubmitResult, kind: MediaKind): Attempt {
   return { kind: 'empty', raw: res.text };
 }
 
+/** An "operations" array is the list the poll endpoint checks — its items each
+ *  carry an `operation` object (with a `name`) and/or a `sceneId`. */
+function isOperationsArray(n: unknown): n is Record<string, unknown>[] {
+  return (
+    Array.isArray(n) &&
+    n.length > 0 &&
+    n.every((it) => it !== null && typeof it === 'object' && ('operation' in it || 'sceneId' in it))
+  );
+}
+
+/** Find the operations array anywhere in a parsed JSON value. */
+function findOperations(node: unknown): Record<string, unknown>[] | null {
+  if (isOperationsArray(node)) return node;
+  if (Array.isArray(node)) {
+    for (const it of node) {
+      const f = findOperations(it);
+      if (f) return f;
+    }
+  } else if (node && typeof node === 'object') {
+    for (const v of Object.values(node)) {
+      const f = findOperations(v);
+      if (f) return f;
+    }
+  }
+  return null;
+}
+
+/** Operations returned by the video submit (batchAsyncGenerateVideo). */
+function extractOperations(submitText: string): Record<string, unknown>[] | null {
+  try {
+    return findOperations(JSON.parse(submitText));
+  } catch {
+    return null;
+  }
+}
+
+/** Collect every video serving URL from a poll response.
+ *  Searches for `fifeUrl` at ANY depth (direct field OR under `.video`).
+ *  flowkit path: operation.metadata.video.fifeUrl; actual path may differ. */
+function collectVideoFifeUrls(text: string): string[] {
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    return [];
+  }
+  const out: string[] = [];
+  const walk = (n: unknown): void => {
+    if (Array.isArray(n)) return n.forEach(walk);
+    if (!n || typeof n !== 'object') return;
+    const o = n as Record<string, unknown>;
+    // fifeUrl directly on THIS object (any parent key — generatedVideo, response, etc.)
+    if (typeof o.fifeUrl === 'string' && /^https?:\/\//.test(o.fifeUrl)) {
+      out.push(o.fifeUrl.replace(/\\u0026/g, '&').replace(/\\/g, ''));
+    }
+    // Original flowkit path: o.video.fifeUrl
+    const v = o.video as Record<string, unknown> | undefined;
+    if (v && typeof v.fifeUrl === 'string') {
+      out.push((v.fifeUrl as string).replace(/\\u0026/g, '&').replace(/\\/g, ''));
+    }
+    for (const val of Object.values(o)) walk(val);
+  };
+  walk(data);
+  return [...new Set(out)];
+}
+
+/** Replace the captured poll body's operations with the ones from THIS submission
+ *  so we poll the right (new) operation instead of the stale captured one. */
+function pollBodyWithOperations(body: unknown, ops: Record<string, unknown>[]): unknown {
+  const clone = JSON.parse(JSON.stringify(body));
+  const replace = (node: unknown): boolean => {
+    if (isOperationsArray(node)) {
+      (node as unknown[]).length = 0;
+      (node as unknown[]).push(...JSON.parse(JSON.stringify(ops)));
+      return true;
+    }
+    if (Array.isArray(node)) return node.some(replace);
+    if (node && typeof node === 'object') {
+      const o = node as Record<string, unknown>;
+      if (Array.isArray(o.operations)) {
+        o.operations = JSON.parse(JSON.stringify(ops));
+        return true;
+      }
+      return Object.values(o).some(replace);
+    }
+    return false;
+  };
+  replace(clone);
+  return clone;
+}
+
+/** UUIDs of the operation(s) we submitted — usually == the result media id. */
+function operationIds(ops: Record<string, unknown>[] | null): string[] {
+  if (!ops) return [];
+  const out: string[] = [];
+  for (const o of ops) {
+    const cand = [(o.operation as Record<string, unknown> | undefined)?.name, o.name, o.sceneId];
+    for (const c of cand) if (typeof c === 'string') out.push(...(c.match(UUID_G) ?? []));
+  }
+  return [...new Set(out)];
+}
+
 async function pollVideo(
   submitText: string,
+  exclude: Set<string>,
   progress: (phase: GenProgress['phase'], message: string) => void,
+  cancelled: () => boolean = () => false,
 ): Promise<GenResultMedia[]> {
-  const poll = templates.videoPoll;
-  if (!poll) {
-    // No poll template captured — best we can do is scan the submit response.
-    return extractMedia(submitText, 'video');
-  }
+  const poll = templates.videoPoll ?? defaultVideoPollTemplate();
+  // Bind the poll to THIS submission's operation(s).
+  const ops = extractOperations(submitText);
+  const opIds = operationIds(ops);
+  const body = ops?.length ? pollBodyWithOperations(poll.body, ops) : poll.body;
+  console.log(
+    ops?.length
+      ? `[FlowGen] pollVideo: polling ${ops.length} operation(s) [${opIds.join(', ')}]`
+      : '[FlowGen] pollVideo: no operations in submit response — replaying captured poll body',
+  );
+
   for (let tick = 0; tick < POLL_MAX_TICKS; tick++) {
     await sleep(POLL_INTERVAL_MS);
+    if (cancelled()) return [];
     try {
-      const res = await submit(poll.url, poll.body, poll.headers);
-      const media = extractMedia(res.text, 'video');
-      if (media.length) return media;
-    } catch {
-      /* keep polling */
+      const res = await submit(poll.url, body, poll.headers);
+      // 1) fifeUrl at any depth (generatedVideo.fifeUrl, metadata.video.fifeUrl, etc.)
+      const fife = collectVideoFifeUrls(res.text);
+      let media: GenResultMedia[] = fife.map((url) => ({ type: 'video', url }));
+      // 2) Resolve operation/media id(s) → URL.
+      if (!media.length) {
+        const resolved = await resolveResultMedia(res.text + '\n' + opIds.join('\n'), exclude);
+        media = resolved.map((m) => ({ type: 'video' as const, url: m.url }));
+      }
+      // 3) GCS signed video URL regex (last resort — some responses embed the URL inline).
+      if (!media.length) {
+        const gcs = (res.text.match(GCS_URL_RE) ?? [])
+          .map((u) => u.replace(/\\u0026/g, '&').replace(/\\/g, ''))
+          .filter((u) => u.includes('/video/'));
+        if (gcs.length) media = gcs.map((url) => ({ type: 'video' as const, url }));
+      }
+      if (media.length) {
+        console.log(`[FlowGen] pollVideo: done at tick ${tick + 1} →`, media[0]?.url?.slice(0, 80));
+        return media;
+      }
+      // Diagnostics: log on tick 0 and every 5 ticks, flag done=true without URL.
+      const hasDone = /"done"\s*:\s*true/.test(res.text);
+      if (tick === 0 || tick % 5 === 4) {
+        console.log(`[FlowGen] poll tick ${tick + 1}: status=${res.status} done=${hasDone} len=${res.text.length}`);
+        if (tick === 0) console.log('[FlowGen] poll resp sample:', res.text.slice(0, 600));
+      }
+      if (hasDone) console.warn(`[FlowGen] poll tick ${tick + 1}: done=true but no URL found! Check response structure. Sample:`, res.text.slice(0, 800));
+    } catch (e) {
+      console.warn(`[FlowGen] poll tick ${tick + 1} error:`, (e as Error).message);
     }
     progress('poll', `Đang render video… (${tick + 1})`);
   }

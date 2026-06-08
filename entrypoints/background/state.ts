@@ -35,8 +35,7 @@ export async function loadPersisted(): Promise<void> {
 
 export function setAppState(next: AppState): void {
   state.appState = next;
-  void chrome.action.setBadgeText({ text: BADGES[next] ?? '' });
-  void chrome.action.setBadgeBackgroundColor({ color: COLORS[next] ?? '#000000' });
+  void chrome.action.setBadgeText({ text: '' });
   broadcastStatus();
 }
 

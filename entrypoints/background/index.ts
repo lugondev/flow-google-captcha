@@ -18,12 +18,17 @@ import {
   fetchProjectMedia,
   enrichWithUrls,
   fetchModelMap,
+  fetchUserProjects,
+  fetchProjectWorkflows,
+  fetchVideoModels,
+  resolveVideoModelKey,
+  updateProjectTitle,
   projectIdFromUrl,
   workflowIdFromUrl,
 } from './project-media';
 import { startTelemetry } from './telemetry';
-import { getRequestLog } from './log';
-import { loadTemplates, getTemplates, recordTemplate, runGenerate } from './generate';
+import { getRequestLog, clearRequestLog } from './log';
+import { loadTemplates, getTemplates, recordTemplate, runGenerate, cancelCurrentRun } from './generate';
 import type { GenerateParams, GenProgress, GenResult } from './types';
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -221,6 +226,16 @@ function handleUiMessage(msg: UiMessage, reply: UiReply): boolean {
       reply({ log: getRequestLog() });
       return true;
 
+    case 'CLEAR_LOG':
+      clearRequestLog();
+      reply({ ok: true });
+      return true;
+
+    case 'CANCEL_GENERATE':
+      cancelCurrentRun();
+      reply({ ok: true });
+      return true;
+
     case 'OPEN_FLOW_TAB':
       void openFlowTab(reply);
       return true;
@@ -273,6 +288,40 @@ function handleUiMessage(msg: UiMessage, reply: UiReply): boolean {
       reply({ ok: true });
       return true;
 
+    case 'GET_PROJECTS':
+      fetchUserProjects()
+        .then((projects) => reply({ projects }))
+        .catch((e) => reply({ error: (e as Error).message, projects: [] }));
+      return true;
+
+    case 'GET_WORKFLOWS':
+      fetchProjectWorkflows(msg.projectId as string)
+        .then((workflows) => reply({ workflows }))
+        .catch((e) => reply({ error: (e as Error).message, workflows: [] }));
+      return true;
+
+    case 'GET_VIDEO_MODELS':
+      void (async () => {
+        let pid = (msg.projectId as string) || '';
+        if (!pid) {
+          const tabs = await chrome.tabs.query({ url: [...FLOW_TAB_URLS] });
+          pid = projectIdFromUrl(tabs[0]?.url) || '';
+        }
+        if (!pid) { reply({ error: 'NO_PROJECT', families: [] }); return; }
+        try {
+          reply({ families: await fetchVideoModels(pid) });
+        } catch (e) {
+          reply({ error: (e as Error).message, families: [] });
+        }
+      })();
+      return true;
+
+    case 'UPDATE_PROJECT_TITLE':
+      updateProjectTitle(msg.projectId as string, msg.title as string)
+        .then(() => reply({ ok: true }))
+        .catch((e) => reply({ ok: false, error: (e as Error).message }));
+      return true;
+
     case 'GET_PROJECT_MEDIA':
       void resolveProjectMedia(
         msg.projectId as string | undefined,
@@ -286,7 +335,8 @@ function handleUiMessage(msg: UiMessage, reply: UiReply): boolean {
       reply({
         image: true, // built-in default schema — no capture needed
         imageBuiltIn: !t.image,
-        video: !!t.video,
+        video: true, // built-in V2 schema — no capture needed
+        videoBuiltIn: !t.video,
         videoPoll: !!t.videoPoll,
         imageAt: t.image?.capturedAt ?? null,
         videoAt: t.video?.capturedAt ?? null,
@@ -305,8 +355,23 @@ function handleUiMessage(msg: UiMessage, reply: UiReply): boolean {
           params.workflowId = params.workflowId || workflowIdFromUrl(t.url) || undefined;
           if (params.projectId && params.workflowId) break;
         }
-        // Translate the model-family id (nano_banana_pro) → real imageModelName.
-        if (params.model && params.projectId) {
+        if (params.mediaType === 'video') {
+          // Video: resolve (family + duration + orientation + mode) → videoModelKey.
+          if (params.videoModelFamily) {
+            const n = params.references?.length ?? 0;
+            const mode = n <= 0 ? 't2v' : n === 1 ? 'i2v' : n === 2 ? 'startend' : 'r2v';
+            const key = await resolveVideoModelKey(
+              params.projectId,
+              params.videoModelFamily,
+              params.videoLengthSeconds,
+              params.orientation,
+              mode,
+            );
+            if (key) params.model = key;
+            else console.warn(`[FlowGen] no video model key for family "${params.videoModelFamily}" mode ${mode}`);
+          }
+        } else if (params.model && params.projectId) {
+          // Image: translate the model-family id (nano_banana_pro) → real imageModelName.
           const mmap = await fetchModelMap(params.projectId);
           if (mmap[params.model]) {
             console.log(`[FlowGen] model ${params.model} → ${mmap[params.model]}`);

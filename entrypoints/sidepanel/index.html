@@ -207,10 +207,12 @@
       .orient { display: flex; gap: 4px; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 4px; }
       .orient-opt { flex: 1; padding: 7px 4px; text-align: center; font-size: 10.5px; font-weight: 600; border-radius: 5px; color: var(--muted); cursor: pointer; transition: background 0.18s, color 0.18s; }
       .orient-opt.active { background: var(--grad); color: #fff; }
-      #btn-generate { padding: 9px; font-family: var(--font); font-size: 12px; font-weight: 700; letter-spacing: 0.01em; border: none; border-radius: var(--radius-sm); background: var(--grad); color: #fff; cursor: pointer; transition: filter 0.15s, transform 0.08s, opacity 0.15s; box-shadow: 0 4px 12px rgba(99, 102, 241, 0.25); }
+      #btn-generate { padding: 9px; font-family: var(--font); font-size: 12px; font-weight: 700; letter-spacing: 0.01em; border: none; border-radius: var(--radius-sm); background: var(--grad); color: #fff; cursor: pointer; transition: filter 0.15s, transform 0.08s, opacity 0.15s, background 0.2s; box-shadow: 0 4px 12px rgba(99, 102, 241, 0.25); }
       #btn-generate:hover:not(:disabled) { filter: brightness(1.08); }
       #btn-generate:active:not(:disabled) { transform: scale(0.99); }
       #btn-generate:disabled { opacity: 0.5; cursor: default; box-shadow: none; }
+      #btn-generate.stopping { background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); box-shadow: 0 4px 12px rgba(239, 68, 68, 0.25); }
+      .btn-danger:hover { border-color: var(--red) !important; color: var(--red) !important; }
       .gen-status { font-size: 11px; letter-spacing: 0.01em; color: var(--muted); min-height: 15px; }
       .gen-status.err { color: var(--red); }
       .gen-status.ok { color: var(--green); }
@@ -300,12 +302,20 @@
           <span class="settings-caret">▶</span>
         </div>
         <div class="settings-body">
-          <div class="gen-field">
+          <div class="gen-field" id="fld-image-model">
             <span class="gen-label">Model</span>
             <select id="gen-model">
               <option value="nano_banana_pro">🍌 Nano Banana Pro</option>
               <option value="narwhal_display">🍌 Nano Banana 2</option>
             </select>
+          </div>
+          <div class="gen-field" id="fld-video-model" style="display:none">
+            <span class="gen-label">Video model</span>
+            <select id="gen-vmodel"></select>
+          </div>
+          <div class="gen-field" id="fld-video-len" style="display:none">
+            <span class="gen-label">Thời lượng</span>
+            <select id="gen-vlen"></select>
           </div>
           <div class="gen-field">
             <span class="gen-label">Orientation</span>
@@ -374,6 +384,7 @@
     <div class="actions">
       <button class="btn btn-primary" id="btn-flow">Open Flow Tab</button>
       <button class="btn" id="btn-token">Refresh Token</button>
+      <button class="btn btn-danger" id="btn-clear" title="Xóa form + session data, về mặc định">↺ Reset</button>
     </div>
 
     <div class="signature">

@@ -32,6 +32,17 @@ export function getRequestLog(): RequestLogEntry[] {
   return requestLog;
 }
 
+export function clearRequestLog(): void {
+  requestLog.length = 0;
+  state.metrics.requestCount = 0;
+  state.metrics.successCount = 0;
+  state.metrics.failedCount = 0;
+  state.metrics.lastError = null;
+  void chrome.storage.local.set({ metrics: state.metrics });
+  broadcastLog();
+  broadcastStatus();
+}
+
 export function classifyApiUrl(url: string): string {
   if (url.includes('uploadImage')) return 'UPLOAD';
   if (url.includes('batchGenerateImages')) return 'GEN_IMG';

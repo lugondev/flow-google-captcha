@@ -21,5 +21,21 @@
       "urlFilter": "aisandbox-pa.googleapis.com",
       "resourceTypes": ["xmlhttprequest"]
     }
+  },
+  {
+    "id": 2,
+    "priority": 1,
+    "action": {
+      "type": "modifyHeaders",
+      "requestHeaders": [
+        { "header": "Referer", "operation": "set", "value": "https://labs.google/fx/tools/flow" },
+        { "header": "Origin", "operation": "set", "value": "https://labs.google" }
+      ]
+    },
+    "condition": {
+      "urlFilter": "labs.google/fx/api/trpc",
+      "resourceTypes": ["xmlhttprequest"],
+      "requestMethods": ["post"]
+    }
   }
 ]

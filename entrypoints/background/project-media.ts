@@ -39,6 +39,170 @@ export function workflowIdFromUrl(url: string | undefined): string | null {
   return url.match(/\/edit\/([0-9a-f-]{36})/)?.[1] ?? null;
 }
 
+export interface UserProject {
+  projectId: string;
+  title: string;
+  thumbnailMediaKey?: string;
+  creationTime?: string;
+}
+
+/** List the signed-in user's Flow projects via project.searchUserProjects. */
+export async function fetchUserProjects(pageSize = 20): Promise<UserProject[]> {
+  const input = encodeURIComponent(
+    JSON.stringify({
+      json: { pageSize, toolName: 'PINHOLE', cursor: null },
+      meta: { values: { cursor: ['undefined'] } },
+    }),
+  );
+  const resp = await fetch(`${TRPC_BASE}project.searchUserProjects?input=${input}`, {
+    method: 'GET',
+    headers: { accept: '*/*', 'content-type': 'application/json' },
+    credentials: 'include',
+  });
+  const text = await resp.text();
+  if (!resp.ok) {
+    console.error('[FlowGen] searchUserProjects', resp.status, text.slice(0, 200));
+    throw new Error(`PROJECTS_FETCH_${resp.status}`);
+  }
+  const data = JSON.parse(text);
+  const projects: Array<Record<string, unknown>> = data?.result?.data?.json?.result?.projects ?? [];
+  return projects
+    .map((p) => {
+      const info = (p.projectInfo as Record<string, unknown>) || {};
+      return {
+        projectId: p.projectId as string,
+        title: (info.projectTitle as string) || (p.projectId as string),
+        thumbnailMediaKey: info.thumbnailMediaKey as string | undefined,
+        creationTime: p.creationTime as string | undefined,
+      };
+    })
+    .filter((p) => p.projectId);
+}
+
+export interface VideoModelFamily {
+  id: string;
+  displayName: string;
+  durations: number[]; // distinct videoLengthSeconds available for the user's tier
+}
+
+// Raw families + tier cached per project so the usage-key resolver can run.
+let videoCache: { projectId: string; tier: string; raw: Array<Record<string, unknown>> } | null = null;
+
+function usageAvailable(u: Record<string, unknown>, tier: string): boolean {
+  const cm = (u.creditMapping as Record<string, { cost?: unknown }>) || {};
+  const cost = cm[tier]?.cost;
+  return cost != null && cost !== 'UNAVAILABLE';
+}
+
+/** Video model families + per-tier available durations (for the model/time picker). */
+export async function fetchVideoModels(projectId: string): Promise<VideoModelFamily[]> {
+  const input = encodeURIComponent(JSON.stringify({ json: { projectId } }));
+  const resp = await fetch(`${TRPC_BASE}flow.projectInitialData?input=${input}`, {
+    method: 'GET',
+    headers: { accept: '*/*' },
+    credentials: 'include',
+  });
+  if (!resp.ok) throw new Error(`VIDEO_MODELS_${resp.status}`);
+  const json = (await resp.json())?.result?.data?.json;
+  const tier = (json?.userData?.serviceTier as string) || 'SERVICE_TIER_INTERMEDIATE';
+  const raw: Array<Record<string, unknown>> = json?.modelConfig?.videoModelFamilies ?? [];
+  videoCache = { projectId, tier, raw };
+
+  const out: VideoModelFamily[] = [];
+  for (const f of raw) {
+    const id = f.id as string;
+    if (!id || /upsampler|low_priority/.test(id)) continue; // hide upscalers + low-priority dupes
+    const durs = new Set<number>();
+    for (const u of (f.usages as Array<Record<string, unknown>>) ?? []) {
+      const len = u.videoLengthSeconds;
+      if (typeof len === 'number' && usageAvailable(u, tier)) durs.add(len);
+    }
+    out.push({ id, displayName: f.displayName as string, durations: [...durs].sort((a, b) => a - b) });
+  }
+  return out;
+}
+
+/** Resolve a videoModelKey usage key from (family, duration, orientation, mode). */
+export async function resolveVideoModelKey(
+  projectId: string | undefined,
+  familyId: string,
+  durationSec: number | undefined,
+  orientation: string | undefined,
+  mode: 't2v' | 'i2v' | 'startend' | 'r2v',
+): Promise<string | null> {
+  if (!projectId) return null;
+  if (!videoCache || videoCache.projectId !== projectId) await fetchVideoModels(projectId);
+  if (!videoCache) return null;
+  const tier = videoCache.tier;
+  const family = videoCache.raw.find((f) => f.id === familyId);
+  if (!family) return null;
+  const orient = orientation === 'landscape' ? 'LANDSCAPE' : 'PORTRAIT'; // video has no square
+  const reqOf = (u: Record<string, unknown>) =>
+    JSON.stringify((u.requirements as unknown[]) ?? []);
+
+  const usages = ((family.usages as Array<Record<string, unknown>>) ?? []).filter((u) => {
+    if (!usageAvailable(u, tier)) return false;
+    if (durationSec != null && typeof u.videoLengthSeconds === 'number' && u.videoLengthSeconds !== durationSec)
+      return false;
+    const ars = (u.supportedAspectRatios as string[] | string) ?? [];
+    const arr = Array.isArray(ars) ? ars : String(ars).split(',');
+    return arr.includes(orient);
+  });
+  if (!usages.length) return null;
+
+  // Pick the usage whose requirements match the requested mode.
+  const byKind = (pred: (req: string) => boolean) => usages.find((u) => pred(reqOf(u)));
+  let chosen: Record<string, unknown> | undefined;
+  if (mode === 'r2v') chosen = byKind((r) => r.includes('REFERENCES'));
+  else if (mode === 'startend') chosen = byKind((r) => r.includes('START_IMAGE') && r.includes('END_IMAGE'));
+  else if (mode === 'i2v') chosen = byKind((r) => r.includes('START_IMAGE') && !r.includes('END_IMAGE'));
+  else chosen = byKind((r) => r.includes('TEXT') && !r.includes('START_IMAGE') && !r.includes('REFERENCES') && !r.includes('END_IMAGE'));
+  // Fallbacks: i2v→start-end, startend→i2v, anything→first available.
+  if (!chosen && mode === 'i2v') chosen = byKind((r) => r.includes('START_IMAGE'));
+  if (!chosen && mode === 'startend') chosen = byKind((r) => r.includes('START_IMAGE'));
+  if (!chosen) chosen = usages[0];
+  const key = chosen?.key as string | undefined;
+  if (key) console.log(`[FlowGen] video model resolved: ${familyId}/${durationSec ?? '?'}s/${orient}/${mode} → ${key}`);
+  else console.warn(`[FlowGen] no video model key for ${familyId}/${mode}`);
+  return key ?? null;
+}
+
+/** Rename a project via project.updateProject (projectTitle mask). */
+export async function updateProjectTitle(projectId: string, title: string): Promise<void> {
+  const resp = await fetch(`${TRPC_BASE}project.updateProject`, {
+    method: 'POST',
+    headers: { accept: '*/*', 'content-type': 'application/json' },
+    credentials: 'include',
+    body: JSON.stringify({
+      json: {
+        projectId,
+        projectInfo: { projectTitle: title },
+        updateMasks: ['projectTitle'],
+        toolName: 'PINHOLE',
+      },
+    }),
+  });
+  if (!resp.ok) {
+    const t = await resp.text();
+    console.error('[FlowGen] updateProject', resp.status, t.slice(0, 200));
+    throw new Error(`UPDATE_PROJECT_${resp.status}`);
+  }
+}
+
+/** Distinct workflows of a project that already have media (id + media count). */
+export async function fetchProjectWorkflows(
+  projectId: string,
+): Promise<Array<{ workflowId: string; count: number }>> {
+  const items = await fetchProjectMedia(projectId);
+  const counts = new Map<string, number>();
+  for (const it of items) {
+    if (it.workflowId) counts.set(it.workflowId, (counts.get(it.workflowId) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([workflowId, count]) => ({ workflowId, count }))
+    .sort((a, b) => b.count - a.count);
+}
+
 export async function fetchProjectMedia(projectId: string): Promise<ProjectMediaItem[]> {
   const input = encodeURIComponent(JSON.stringify({ json: { projectId } }));
   const url = `${TRPC_BASE}flow.projectInitialData?input=${input}`;
