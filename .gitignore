@@ -6,10 +6,14 @@ node_modules
 .output
 .wxt
 
-# zip
+# zip / packaged builds
 *.zip
 *.crx
 *.xpi
+
+# signing keys — never commit
+keys
+*.pem
 
 # logs
 *.log
