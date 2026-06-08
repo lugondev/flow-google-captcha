@@ -3,7 +3,7 @@
  * generation (own prompt + reference images), sharing one settings set. Rows run
  * in parallel up to a concurrency cap, reusing the background GENERATE pipeline.
  */
-export {};
+import { openMediaModal } from '../../utils/media-modal';
 
 const MAX_REFS = 9;
 
@@ -453,18 +453,10 @@ function initToolbar(): void {
   );
   $('settings-toggle')!.addEventListener('click', () => $('settings-card')!.classList.toggle('open'));
 
-  // Footer + project-bar actions
-  $('btn-flow')!.addEventListener('click', () => chrome.runtime.sendMessage({ type: 'OPEN_FLOW_TAB' }));
+  // Project-bar actions (footer just shows token status + credit now)
   $('pi-open')!.addEventListener('click', () => chrome.runtime.sendMessage({ type: 'OPEN_FLOW_TAB' }));
+  $('pi-media')!.addEventListener('click', () => openMediaModal());
   $('pi-refresh')!.addEventListener('click', () => { fetchProjectInfo(); fetchStatus(); });
-  $('btn-token')!.addEventListener('click', () => {
-    const btn = $('btn-token') as HTMLButtonElement;
-    btn.disabled = true; btn.textContent = 'Đang sync…';
-    chrome.runtime.sendMessage({ type: 'REFRESH_TOKEN' }, () => {
-      btn.disabled = false; btn.textContent = 'Refresh Token';
-      fetchStatus(); fetchProjectInfo();
-    });
-  });
   $('chk-all')!.addEventListener('change', (e) => {
     const on = (e.target as HTMLInputElement).checked;
     document.querySelectorAll<HTMLInputElement>('#rows input[data-act="sel"]').forEach((c) => (c.checked = on));

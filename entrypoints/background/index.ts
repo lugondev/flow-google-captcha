@@ -274,7 +274,11 @@ function handleUiMessage(msg: UiMessage, reply: UiReply): boolean {
       return true;
 
     case 'GET_PROJECT_MEDIA':
-      void resolveProjectMedia(msg.projectId as string | undefined, reply);
+      void resolveProjectMedia(
+        msg.projectId as string | undefined,
+        reply,
+        (msg.scope as 'workflow' | 'project' | undefined) || 'workflow',
+      );
       return true;
 
     case 'GET_TEMPLATES': {
@@ -334,6 +338,7 @@ function handleUiMessage(msg: UiMessage, reply: UiReply): boolean {
 async function resolveProjectMedia(
   projectId: string | undefined,
   reply: UiReply,
+  scope: 'workflow' | 'project' = 'workflow',
 ): Promise<void> {
   try {
     let pid = projectId || null;
@@ -353,10 +358,10 @@ async function resolveProjectMedia(
 
     const all = await fetchProjectMedia(pid);
 
-    // Scope references to the current workflow (so they're valid in the request).
-    // Fall back to the whole project if the workflow has none yet.
-    let items = wfid ? all.filter((it) => it.workflowId === wfid) : all;
-    let scoped = true;
+    // Scope to the current workflow by default (refs must be valid in the request),
+    // or return the whole project when explicitly requested (media management).
+    let items = scope === 'project' || !wfid ? all : all.filter((it) => it.workflowId === wfid);
+    let scoped = scope !== 'project' && !!wfid && items.length > 0;
     if (!items.length) {
       items = all;
       scoped = false;

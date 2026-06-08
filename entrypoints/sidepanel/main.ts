@@ -10,6 +10,7 @@ import {
   formatType,
   truncate,
 } from '../../utils/log-display';
+import { openMediaModal } from '../../utils/media-modal';
 
 type LogStatus = string | number | undefined;
 
@@ -610,6 +611,8 @@ function initGeneratePanel(): void {
   updateSettingsSummary();
   refreshTemplateHint();
 }
+
+document.getElementById('btn-media')?.addEventListener('click', () => openMediaModal());
 
 document.getElementById('btn-batch')?.addEventListener('click', () => {
   chrome.tabs.create({ url: chrome.runtime.getURL('batch.html') });

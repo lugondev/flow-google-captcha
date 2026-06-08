@@ -20,6 +20,7 @@ export default defineConfig({
       'declarativeNetRequest',
       'sidePanel',
       'contextMenus',
+      'downloads',
     ],
     host_permissions: [
       'https://labs.google/*',
