@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Flow Helper · Brand Studio</title>
+    <style>
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+      :root {
+        --bg: #0b0b16; --surface: #14142b; --card: #1c1c3a; --card-hover: #23234a;
+        --border: #2a2a4d; --accent: #6366f1; --accent-2: #3b82f6;
+        --grad: linear-gradient(135deg, #6366f1 0%, #3b82f6 100%);
+        --green: #22c55e; --red: #ef4444; --yellow: #f59e0b;
+        --text: #e6e8f5; --muted: #8b8fb0; --radius: 10px; --radius-sm: 7px;
+        --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        --mono: 'DM Mono', 'Fira Code', ui-monospace, monospace;
+      }
+      html, body { height: 100%; overflow: hidden; }
+      body {
+        background: radial-gradient(1200px 500px at 100% -10%, rgba(99,102,241,0.10), transparent 60%), var(--bg);
+        color: var(--text); font-family: var(--font); font-size: 13px; line-height: 1.5;
+        display: flex; flex-direction: column; -webkit-font-smoothing: antialiased;
+      }
+
+      /* ── header ── */
+      header {
+        display: flex; align-items: center; gap: 10px; padding: 10px 18px;
+        border-bottom: 1px solid var(--border); background: var(--surface); flex-shrink: 0;
+      }
+      .title { font-size: 16px; font-weight: 700; display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+      .title::before { content: '◈'; background: var(--grad); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+      .title span { background: var(--grad); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+      .pb-select { font-family: var(--font); font-size: 12px; color: var(--text); background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; max-width: 200px; }
+      .pb-select:focus { outline: none; border-color: var(--accent); }
+      .pb-label { font-size: 10px; font-weight: 600; color: var(--muted); white-space: nowrap; }
+      .pb-group { display: flex; align-items: center; gap: 5px; }
+      #bs-token { margin-left: auto; font-size: 11px; font-weight: 600; white-space: nowrap; }
+      #bs-token.ok { color: var(--green); }
+      #bs-token.bad { color: var(--red); }
+      #bs-token.warn { color: var(--yellow); }
+
+      /* ── studio layout ── */
+      .studio { display: flex; flex: 1; overflow: hidden; }
+
+      /* ── brand panel (left) ── */
+      .brand-panel {
+        width: 300px; flex-shrink: 0; border-right: 1px solid var(--border);
+        overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px;
+        background: var(--surface);
+      }
+      .section-title {
+        font-size: 10.5px; font-weight: 700; color: var(--muted);
+        text-transform: uppercase; letter-spacing: .06em; margin-bottom: 6px;
+      }
+      .field { display: flex; flex-direction: column; gap: 5px; }
+      .field label { font-size: 11px; font-weight: 600; color: var(--muted); }
+      textarea, select, input[type=text], input[type=number] {
+        font-family: var(--font); font-size: 12.5px; color: var(--text);
+        background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-sm);
+        padding: 7px 9px; width: 100%;
+      }
+      textarea { resize: vertical; min-height: 52px; line-height: 1.45; }
+      textarea::placeholder, input::placeholder { color: var(--muted); }
+      textarea:focus, select:focus, input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(99,102,241,.16); }
+      input[type=number] { width: 70px; }
+      .settings-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; }
+      .settings-row .field { flex: 1; min-width: 80px; }
+
+      /* assets grid */
+      .assets-wrap { display: flex; flex-direction: column; gap: 8px; }
+      .asset-grid { display: flex; flex-wrap: wrap; gap: 6px; min-height: 10px; }
+      .asset-item { position: relative; width: 56px; height: 56px; }
+      .asset-thumb { width: 100%; height: 100%; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); display: block; }
+      .asset-noimg { display: flex; align-items: center; justify-content: center; font-size: 8px; color: var(--muted); background: var(--card); border-radius: 6px; border: 1px solid var(--border); width: 100%; height: 100%; word-break: break-all; text-align: center; padding: 2px; }
+      .asset-rm { position: absolute; top: -5px; right: -5px; width: 16px; height: 16px; border-radius: 50%; background: var(--red); color: #fff; border: none; cursor: pointer; font-size: 10px; line-height: 16px; text-align: center; padding: 0; }
+      .asset-hint { font-size: 10.5px; color: var(--muted); }
+      .asset-btns { display: flex; gap: 6px; }
+
+      /* ── products panel (right) ── */
+      .products-panel { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+      .prod-toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+      /* drop zone */
+      .drop-zone {
+        border: 2px dashed var(--border); border-radius: var(--radius); padding: 18px;
+        text-align: center; color: var(--muted); cursor: pointer; font-size: 12px;
+        transition: border-color .15s, background .15s; flex: 1; min-width: 180px;
+      }
+      .drop-zone:hover, .drop-zone.drag-over { border-color: var(--accent); background: rgba(99,102,241,.06); color: var(--text); }
+
+      /* product rows */
+      #bs-products-list { display: flex; flex-direction: column; gap: 8px; }
+      .product-row {
+        background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+        padding: 10px 12px; display: flex; align-items: flex-start; gap: 10px; transition: border-color .2s;
+      }
+      .product-row.running { border-color: var(--yellow); }
+      .product-row.done    { border-color: rgba(34,197,94,.4); }
+      .product-row.failed  { border-color: rgba(239,68,68,.4); }
+
+      .prod-thumb { width: 72px; height: 72px; object-fit: cover; border-radius: var(--radius-sm); flex-shrink: 0; display: block; border: 1px solid var(--border); }
+      .prod-noimg { display: flex; align-items: center; justify-content: center; font-size: 8px; color: var(--muted); background: var(--card-hover); border-radius: var(--radius-sm); border: 1px solid var(--border); width: 72px; height: 72px; flex-shrink: 0; word-break: break-all; text-align: center; padding: 4px; }
+      .prod-body { display: flex; flex-direction: column; gap: 3px; min-width: 100px; flex-shrink: 0; }
+      .prod-name { font-size: 12px; font-weight: 600; word-break: break-word; max-width: 130px; }
+      .prod-status { display: flex; flex-wrap: wrap; gap: 4px; align-items: flex-start; }
+      .prod-arrow { font-size: 18px; color: var(--muted); flex-shrink: 0; align-self: center; padding: 0 4px; }
+      .prod-outputs { display: flex; gap: 6px; flex-wrap: wrap; align-items: flex-start; flex: 1; min-height: 72px; align-self: center; }
+      .output-img { width: 72px; height: 72px; object-fit: cover; border-radius: var(--radius-sm); border: 1px solid var(--border); cursor: zoom-in; display: block; }
+      .output-ph { width: 72px; height: 72px; border: 1px dashed var(--border); border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 12px; }
+      .prod-rm { margin-left: auto; flex-shrink: 0; background: none; border: 1px solid transparent; color: var(--muted); cursor: pointer; font-size: 16px; padding: 2px 6px; border-radius: 5px; align-self: flex-start; }
+      .prod-rm:hover { border-color: var(--red); color: var(--red); }
+
+      #bs-empty { text-align: center; color: var(--muted); padding: 40px; font-size: 12px; display: none; }
+
+      /* badges / prog */
+      .badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+      .b-idle    { background: var(--border); color: var(--muted); }
+      .b-running { background: rgba(245,158,11,.15); color: var(--yellow); }
+      .b-done    { background: rgba(34,197,94,.15); color: var(--green); }
+      .b-failed  { background: rgba(239,68,68,.15); color: var(--red); }
+      .prog-msg  { font-size: 10.5px; color: var(--muted); }
+      .prog-msg.err { color: var(--red); }
+
+      /* ── buttons ── */
+      .btn { padding: 8px 14px; font-family: var(--font); font-size: 12px; font-weight: 600; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--card); color: var(--text); cursor: pointer; transition: background .15s, border-color .15s, color .15s; white-space: nowrap; }
+      .btn:hover { background: var(--card-hover); border-color: var(--accent); }
+      .btn:active { transform: scale(.98); }
+      .btn:disabled { opacity: .45; cursor: default; }
+      .btn-sm { padding: 5px 10px; font-size: 11px; }
+      .btn-primary { background: var(--grad); border-color: transparent; color: #fff; box-shadow: 0 4px 14px rgba(99,102,241,.2); }
+      .btn-primary:hover { filter: brightness(1.08); border-color: transparent; }
+      .btn-stop { border-color: var(--red); color: var(--red); }
+      .btn-stop:hover:not(:disabled) { background: rgba(239,68,68,.1); }
+      .btn-stop:disabled { opacity: .4; cursor: default; }
+      .btn-ghost { background: transparent; border-color: transparent; color: var(--muted); }
+      .btn-ghost:hover { color: var(--text); border-color: var(--border); background: var(--card); }
+
+      /* ── footer ── */
+      .footer { flex-shrink: 0; border-top: 1px solid var(--border); background: var(--surface); display: flex; align-items: center; gap: 10px; padding: 10px 18px; }
+      .footer-info { font-size: 11px; color: var(--muted); flex: 1; }
+      .footer-actions { display: flex; gap: 8px; }
+      .signature { font-size: 10px; color: var(--muted); }
+      .signature a { color: var(--accent); text-decoration: none; }
+
+      /* ── picker modal ── */
+      .modal { display: none; position: fixed; inset: 0; background: rgba(5,5,15,.75); backdrop-filter: blur(2px); z-index: 100; align-items: center; justify-content: center; }
+      .modal.open { display: flex; }
+      .modal-panel { width: 640px; max-width: 92vw; max-height: 80vh; background: var(--card); border: 1px solid var(--border); border-radius: 14px; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,.5); }
+      .modal-head { display: flex; align-items: center; gap: 10px; padding: 12px 16px; background: var(--surface); border-bottom: 1px solid var(--border); font-weight: 700; flex-shrink: 0; }
+      .modal-head .close { margin-left: auto; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 18px; }
+      .modal-head .close:hover { color: var(--text); }
+      .modal-body { padding: 14px 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; flex: 1; }
+      .pg { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
+      .pg .pm { position: relative; aspect-ratio: 1; border-radius: 5px; overflow: hidden; border: 2px solid transparent; cursor: pointer; background: var(--surface); }
+      .pg .pm:hover { border-color: var(--border); }
+      .pg .pm.sel { border-color: var(--accent); }
+      .pg .pm img { width: 100%; height: 100%; object-fit: cover; display: block; }
+      .modal-hint { font-size: 11px; color: var(--muted); }
+      .modal-actions { display: flex; gap: 8px; padding: 10px 16px; border-top: 1px solid var(--border); background: var(--surface); flex-shrink: 0; }
+
+      /* divider */
+      .divider { height: 1px; background: var(--border); margin: 0; }
+
+      @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .5; } }
+      .anim { animation: pulse 1s ease-in-out infinite; }
+    </style>
+  </head>
+  <body>
+    <!-- ── header ── -->
+    <header>
+      <div class="title"><span>Brand Studio</span></div>
+      <div class="pb-group">
+        <span class="pb-label">Project</span>
+        <select class="pb-select" id="bs-project">
+          <option value="">(tab hiện tại)</option>
+        </select>
+      </div>
+      <div class="pb-group">
+        <span class="pb-label">Workflow</span>
+        <select class="pb-select" id="bs-workflow">
+          <option value="">(mặc định)</option>
+        </select>
+      </div>
+      <span id="bs-token">○ …</span>
+    </header>
+
+    <!-- ── studio layout ── -->
+    <div class="studio">
+
+      <!-- ─ left: branding config ─ -->
+      <div class="brand-panel">
+        <div>
+          <div class="section-title">Brand</div>
+          <div class="field" style="margin-bottom:8px">
+            <label>Tên brand</label>
+            <input type="text" id="bs-brand-name" placeholder="VD: Nike, Uniqlo, …" />
+          </div>
+          <div class="field">
+            <label>Mô tả phong cách</label>
+            <textarea id="bs-brand-desc" placeholder="VD: minimalist, clean white background, bold typography…" rows="3"></textarea>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="assets-wrap">
+          <div class="section-title">Brand Assets <span id="bs-assets-hint" class="asset-hint" style="text-transform:none;letter-spacing:0">0/8</span></div>
+          <div class="asset-grid" id="bs-assets-grid"></div>
+          <div class="asset-btns">
+            <button class="btn btn-sm" id="bs-brand-add-local">+ Local</button>
+            <button class="btn btn-sm" id="bs-brand-add-project">+ Project</button>
+          </div>
+          <div class="modal-hint" style="font-size:10.5px">Logo, ảnh style, màu sắc brand… (tối đa 8 ảnh)</div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div>
+          <div class="section-title">Prompt Template</div>
+          <div class="field">
+            <label>Template — dùng {brand_name}, {brand_desc}</label>
+            <textarea id="bs-prompt-template" rows="4">Professional product photography featuring {brand_name} branding, {brand_desc}, clean studio lighting, high detail</textarea>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div>
+          <div class="section-title">Settings</div>
+          <div class="settings-row">
+            <div class="field">
+              <label>Model</label>
+              <select id="bs-model">
+                <option value="nano_banana_pro">Nano / Pro</option>
+                <option value="narwhal_display">Narwhal</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Tỷ lệ</label>
+              <select id="bs-orient">
+                <option value="portrait">Portrait</option>
+                <option value="landscape">Landscape</option>
+                <option value="square">Square</option>
+              </select>
+            </div>
+          </div>
+          <div class="settings-row" style="margin-top:8px">
+            <div class="field">
+              <label>Số ảnh/SP</label>
+              <input type="number" id="bs-count" value="2" min="1" max="4" style="width:70px" />
+            </div>
+            <div class="field">
+              <label>Thử tối đa</label>
+              <input type="number" id="bs-attempts" value="3" min="1" max="10" style="width:70px" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ─ right: products ─ -->
+      <div class="products-panel">
+        <div class="prod-toolbar">
+          <div class="drop-zone" id="bs-dropzone">
+            ↓ Kéo thả ảnh sản phẩm vào đây, hoặc click để chọn file
+          </div>
+          <button class="btn" id="bs-add-from-project">📁 Từ project</button>
+        </div>
+
+        <div id="bs-empty" style="display:none">
+          Chưa có sản phẩm — kéo thả ảnh hoặc chọn từ project để bắt đầu.
+        </div>
+        <div id="bs-products-list"></div>
+      </div>
+    </div>
+
+    <!-- ── footer ── -->
+    <div class="footer">
+      <div class="footer-info" id="bs-footer-info">Chưa có sản phẩm</div>
+      <div class="footer-actions">
+        <button class="btn btn-stop" id="bs-stop" disabled>■ Dừng</button>
+        <button class="btn btn-primary" id="bs-generate" disabled>▶ Generate All</button>
+      </div>
+      <span class="signature"><a href="https://github.com/lugondev/flow-google-captcha" target="_blank">Flow Helper</a></span>
+    </div>
+
+    <!-- ── project picker modal ── -->
+    <div class="modal" id="bs-picker-modal">
+      <div class="modal-panel">
+        <div class="modal-head">
+          <span id="bs-picker-title">Chọn ảnh từ project</span>
+          <button class="close" id="bs-picker-close">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="modal-hint" id="bs-picker-hint">Chọn ảnh bên dưới. Có thể chọn nhiều.</div>
+          <div class="pg" id="bs-picker-pg">
+            <div class="modal-hint">Đang tải…</div>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-sm" id="bs-picker-upload">↑ Upload local</button>
+          <button class="btn btn-sm btn-primary" id="bs-picker-done" style="margin-left:auto">Xong</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- hidden file inputs -->
+    <input type="file" id="bs-prod-file" accept="image/*" multiple hidden />
+    <input type="file" id="bs-brand-file" accept="image/*" multiple hidden />
+    <input type="file" id="bs-picker-file" accept="image/*" multiple hidden />
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

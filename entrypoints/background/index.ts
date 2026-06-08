@@ -94,6 +94,9 @@ export default defineBackground({
       if (info.menuItemId === 'open-workflow') {
         void chrome.tabs.create({ url: chrome.runtime.getURL('workflow.html') });
       }
+      if (info.menuItemId === 'open-brand-studio') {
+        void chrome.tabs.create({ url: chrome.runtime.getURL('brand-studio.html') });
+      }
     });
     chrome.contextMenus.removeAll(() => {
       chrome.contextMenus.create({
@@ -104,6 +107,11 @@ export default defineBackground({
       chrome.contextMenus.create({
         id: 'open-workflow',
         title: '✦ Mở Workflow canvas',
+        contexts: ['action'],
+      });
+      chrome.contextMenus.create({
+        id: 'open-brand-studio',
+        title: '◈ Mở Brand Studio',
         contexts: ['action'],
       });
     });
