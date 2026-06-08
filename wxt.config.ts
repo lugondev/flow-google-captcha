@@ -1,4 +1,5 @@
 import { defineConfig } from 'wxt';
+import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   srcDir: '.',
@@ -47,8 +48,8 @@ export default defineConfig({
   autoIcons: { enabled: false },
 
   vite: () => ({
+    plugins: [react()],
     server: {
-      // Allow loading from any host during local development
       host: '127.0.0.1',
     },
   }),
