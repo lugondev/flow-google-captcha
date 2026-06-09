@@ -1,7 +1,7 @@
 {
   "name": "flow-google-captcha",
   "description": "Local agent bridge for Google Flow API — captures tokens, solves reCAPTCHA, proxies API calls.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {
