@@ -490,6 +490,31 @@ async function generateAll(): Promise<void> {
   running = false; cancelled = false; updateFooter();
 }
 
+// ─── clear / reset ───────────────────────────────────────────
+function clearOutputs(): void {
+  if (running) return;
+  products.forEach((p) => { p.status = 'idle'; p.outputs = []; p.progress = undefined; p.error = undefined; });
+  save(); render();
+}
+
+function resetAll(): void {
+  if (running) return;
+  if (!confirm('Xóa toàn bộ sản phẩm, brand assets và cài đặt?')) return;
+  products = [];
+  brandAssets = [];
+  config.brandName = '';
+  config.brandDesc = '';
+  config.promptTemplate = 'Professional product photography featuring {brand_name} branding, {brand_desc}, clean studio lighting, high detail';
+  config.model = 'nano_banana_pro';
+  config.orientation = 'portrait';
+  config.count = 2;
+  config.maxAttempts = 3;
+  void chrome.storage.local.remove(STORE_KEY);
+  applyConfigToInputs();
+  render();
+  renderBrandAssets();
+}
+
 // ─── project / workflow ──────────────────────────────────────
 function populateProjects(): void {
   chrome.runtime.sendMessage({ type: 'GET_PROJECTS' }, (data) => {
@@ -591,6 +616,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   $('bs-brand-add-project')!.addEventListener('click', () => openPicker('brand'));
   $('bs-generate')!.addEventListener('click', () => void generateAll());
   $('bs-stop')!.addEventListener('click', () => { cancelled = true; });
+  $('bs-clear-outputs')!.addEventListener('click', clearOutputs);
+  $('bs-reset')!.addEventListener('click', resetAll);
 
   // Picker modal
   $('bs-picker-close')!.addEventListener('click', closePicker);
