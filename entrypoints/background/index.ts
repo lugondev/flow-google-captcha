@@ -351,6 +351,7 @@ function handleUiMessage(msg: UiMessage, reply: UiReply): boolean {
         msg.projectId as string | undefined,
         reply,
         (msg.scope as 'workflow' | 'project' | undefined) || 'workflow',
+        msg.workflowId as string | undefined,
       );
       return true;
 
@@ -428,11 +429,13 @@ async function resolveProjectMedia(
   projectId: string | undefined,
   reply: UiReply,
   scope: 'workflow' | 'project' = 'workflow',
+  workflowId?: string,
 ): Promise<void> {
   try {
     let pid = projectId || null;
-    let wfid: string | null = null;
-    if (!pid) {
+    let wfid: string | null = workflowId || null;
+    // Fill in whatever the caller didn't supply from an open Flow tab.
+    if (!pid || !wfid) {
       const tabs = await chrome.tabs.query({ url: [...FLOW_TAB_URLS] });
       for (const t of tabs) {
         pid = pid || projectIdFromUrl(t.url);

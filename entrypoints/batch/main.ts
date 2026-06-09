@@ -473,7 +473,7 @@ function mergeRefs(row: Row): BatchRef[] {
 function loadProjectGrid(): void {
   const pg = $('batch-ref-pg')!;
   pg.innerHTML = '<div class="modal-hint">Đang tải từ project…</div>';
-  chrome.runtime.sendMessage({ type: 'GET_PROJECT_MEDIA', projectId: selProjectId || undefined }, (data) => {
+  chrome.runtime.sendMessage({ type: 'GET_PROJECT_MEDIA', projectId: selProjectId || undefined, workflowId: selWorkflowId || undefined }, (data) => {
     if (chrome.runtime.lastError || !data) { pg.innerHTML = `<div class="modal-hint">Lỗi: ${escHtml(chrome.runtime.lastError?.message || 'no data')}</div>`; return; }
     if (data.error) { pg.innerHTML = `<div class="modal-hint">${escHtml(data.error)}</div>`; return; }
     const all = (data.media as ProjectMedia[]) || [];

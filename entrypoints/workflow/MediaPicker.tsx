@@ -25,7 +25,7 @@ export function MediaPicker({ onSelect, onClose }: Props) {
     setLoading(true);
     setError('');
     chrome.runtime.sendMessage(
-      { type: 'GET_PROJECT_MEDIA', projectId: projectId || undefined, scope: s },
+      { type: 'GET_PROJECT_MEDIA', projectId: projectId || undefined, workflowId: workflowId || undefined, scope: s },
       (data) => {
         setLoading(false);
         if (chrome.runtime.lastError || !data) {

@@ -307,7 +307,7 @@ function closePicker(): void {
 function loadPickerGrid(): void {
   const pg = $('bs-picker-pg')!;
   pg.innerHTML = '<div class="modal-hint">Đang tải từ project…</div>';
-  chrome.runtime.sendMessage({ type: 'GET_PROJECT_MEDIA', projectId: selProjectId || undefined }, (data) => {
+  chrome.runtime.sendMessage({ type: 'GET_PROJECT_MEDIA', projectId: selProjectId || undefined, workflowId: selWorkflowId || undefined }, (data) => {
     if (chrome.runtime.lastError || !data || data.error) {
       pg.innerHTML = `<div class="modal-hint">Lỗi: ${escHtml(chrome.runtime.lastError?.message || data?.error || 'no data')}</div>`;
       return;
