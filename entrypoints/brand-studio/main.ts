@@ -515,11 +515,15 @@ function loadWorkflows(pid: string): void {
 }
 
 function fetchStatus(): void {
-  chrome.runtime.sendMessage({ type: 'PING' }, (r) => {
-    if (chrome.runtime.lastError || !r) return;
+  chrome.runtime.sendMessage({ type: 'STATUS' }, (data) => {
+    if (chrome.runtime.lastError || !data) return;
     const el = $('bs-token')!;
-    if (r.tokenValid) { el.textContent = '● Token OK'; el.className = 'ok'; }
-    else { el.textContent = '○ Chưa có token'; el.className = 'bad'; }
+    if (!data.hasFlowTab) { el.textContent = '○ Chưa mở tab Flow'; el.className = 'bad'; }
+    else if (data.flowKeyPresent) {
+      const ageMin = Math.round((data.tokenAge || 0) / 60000);
+      if ((data.tokenAge || 0) > 3_600_000) { el.textContent = `⚠ Token cũ ${ageMin}m — mở Flow để refresh`; el.className = 'warn'; }
+      else { el.textContent = `● Token OK (${ageMin}m)`; el.className = 'ok'; }
+    } else { el.textContent = '○ Chưa có token'; el.className = 'bad'; }
   });
 }
 
