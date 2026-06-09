@@ -462,6 +462,12 @@ async function generateAll(): Promise<void> {
   running = true; cancelled = false;
   updateFooter();
 
+  // Ensure a fresh token before uploading/generating (avoids first-attempt 401).
+  await new Promise<void>((resolve) =>
+    chrome.runtime.sendMessage({ type: 'REFRESH_TOKEN' }, () => resolve()),
+  );
+  fetchStatus();
+
   await preUploadBrandAssets();
 
   const queue = products.filter((p) => p.status !== 'done');
@@ -518,12 +524,20 @@ function fetchStatus(): void {
   chrome.runtime.sendMessage({ type: 'STATUS' }, (data) => {
     if (chrome.runtime.lastError || !data) return;
     const el = $('bs-token')!;
-    if (!data.hasFlowTab) { el.textContent = '○ Chưa mở tab Flow'; el.className = 'bad'; }
-    else if (data.flowKeyPresent) {
-      const ageMin = Math.round((data.tokenAge || 0) / 60000);
-      if ((data.tokenAge || 0) > 3_600_000) { el.textContent = `⚠ Token cũ ${ageMin}m — mở Flow để refresh`; el.className = 'warn'; }
+    const ageMs = data.tokenAge || 0;
+    if (data.flowKeyPresent) {
+      const ageMin = Math.round(ageMs / 60000);
+      if (ageMs > 3_600_000) { el.textContent = `⚠ Token cũ ${ageMin}m — đang refresh…`; el.className = 'warn'; }
       else { el.textContent = `● Token OK (${ageMin}m)`; el.className = 'ok'; }
-    } else { el.textContent = '○ Chưa có token'; el.className = 'bad'; }
+      // Proactively refresh before the ~1h Google access-token expiry.
+      if (ageMs > 3_300_000) chrome.runtime.sendMessage({ type: 'REFRESH_TOKEN' });
+    } else if (!data.hasFlowTab) {
+      el.textContent = '○ Chưa có token — đang mở Flow…'; el.className = 'bad';
+      chrome.runtime.sendMessage({ type: 'REFRESH_TOKEN' });
+    } else {
+      el.textContent = '○ Chưa có token — đang lấy…'; el.className = 'bad';
+      chrome.runtime.sendMessage({ type: 'REFRESH_TOKEN' });
+    }
   });
 }
 
@@ -533,6 +547,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   applyConfigToInputs();
   render();
   renderBrandAssets();
+  // Kick off token capture immediately, then read status shortly after.
+  chrome.runtime.sendMessage({ type: 'REFRESH_TOKEN' }, () => {
+    if (chrome.runtime.lastError) return;
+    setTimeout(fetchStatus, 800);
+  });
   fetchStatus();
   populateProjects();
 
